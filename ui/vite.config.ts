@@ -10,6 +10,23 @@ export default defineConfig({
         target: 'http://localhost:8800',
         changeOrigin: true,
       },
+      // ACS API endpoints /{stack}/adminconfig/v2/*
+      '^/[^/]+/adminconfig': {
+        target: 'http://localhost:8800',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://localhost:8800',
+        changeOrigin: true,
+      },
+      '/docs': {
+        target: 'http://localhost:8800',
+        changeOrigin: true,
+      },
+      '/openapi.json': {
+        target: 'http://localhost:8800',
+        changeOrigin: true,
+      },
     },
   },
 })
