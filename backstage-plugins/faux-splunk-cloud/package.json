@@ -1,0 +1,55 @@
+{
+  "name": "@internal/plugin-faux-splunk-cloud",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "Apache-2.0",
+  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "main": "dist/index.esm.js",
+    "types": "dist/index.d.ts"
+  },
+  "backstage": {
+    "role": "frontend-plugin"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "start": "backstage-cli package start",
+    "build": "backstage-cli package build",
+    "lint": "backstage-cli package lint",
+    "test": "backstage-cli package test",
+    "clean": "backstage-cli package clean",
+    "prepack": "backstage-cli package prepack",
+    "postpack": "backstage-cli package postpack"
+  },
+  "dependencies": {
+    "@backstage/core-components": "^0.14.0",
+    "@backstage/core-plugin-api": "^1.9.0",
+    "@backstage/plugin-catalog-react": "^1.11.0",
+    "@backstage/theme": "^0.5.0",
+    "@splunk/react-ui": "^5.6.0",
+    "@splunk/themes": "^1.4.1",
+    "@tanstack/react-query": "^5.17.0",
+    "react-use": "^17.5.0",
+    "styled-components": "^5.3.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "^6.0.0"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.26.0",
+    "@backstage/core-app-api": "^1.12.0",
+    "@backstage/dev-utils": "^1.0.0",
+    "@backstage/test-utils": "^1.5.0",
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@types/react": "^18.0.0",
+    "msw": "^1.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
