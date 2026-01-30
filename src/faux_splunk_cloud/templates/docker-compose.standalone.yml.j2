@@ -5,6 +5,8 @@
 # Reference: Splunk Validated Architectures - Single Server
 # https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
 # https://splunk.github.io/docker-splunk/ADVANCED.html
+#
+# Optimized for ARM64 emulation (x86 images via Rosetta/QEMU)
 
 version: "3.8"
 
@@ -22,6 +24,7 @@ volumes:
 services:
   splunk:
     image: {{ splunk_image }}
+    platform: linux/amd64  # Splunk doesn't have ARM64 images
     container_name: {{ instance_id }}_splunk
     hostname: {{ instance_id }}-splunk
     networks:
@@ -41,6 +44,11 @@ services:
       SPLUNK_LICENSE_URI: "Free"
       # Point to default.yml for all configuration
       SPLUNK_DEFAULTS_URL: "/tmp/defaults/default.yml"
+      # Emulation optimizations - skip non-essential preflight checks
+      SPLUNK_ANSIBLE_POST_TASKS: ""
+      SPLUNK_DISABLE_POPUPS: "true"
+      # Reduce memory pressure on emulated environment
+      SPLUNK_LAUNCH_CONF: "OPTIMISTIC_ABOUT_FILE_LOCKING=1"
     volumes:
       - splunk_var:/opt/splunk/var
       - splunk_etc:/opt/splunk/etc
@@ -48,13 +56,18 @@ services:
       - {{ defaults_path }}:/tmp/defaults:ro
     mem_limit: {{ memory_limit }}m
     cpus: {{ cpu_limit }}
+    # Memory reservation helps with emulation scheduling
+    mem_reservation: {{ (memory_limit * 0.5) | int }}m
     restart: unless-stopped
+    # Extended timeouts for emulated environment
     healthcheck:
-      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 180s
+      test: ["CMD", "curl", "-k", "-f", "--max-time", "10", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 45s
+      timeout: 20s
+      retries: 15
+      start_period: 300s
+    # Graceful stop with longer timeout for emulation
+    stop_grace_period: 60s
     labels:
       com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
       com.faux-splunk-cloud.topology: "standalone"

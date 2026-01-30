@@ -195,3 +195,233 @@ async def extend_instance_ttl(
         return instance
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==================== Instance Export ====================
+
+from enum import Enum
+from fastapi.responses import StreamingResponse
+
+
+class ExportFormat(str, Enum):
+    """Supported export formats."""
+    DOCKER_COMPOSE = "docker-compose"
+    KUBERNETES = "kubernetes"
+    ANSIBLE = "ansible"
+    BARE_METAL = "bare-metal"
+    TERRAFORM = "terraform"
+
+
+class ExportScope(str, Enum):
+    """What to include in the export."""
+    CONFIG_ONLY = "config-only"
+    CONFIG_AND_APPS = "config-and-apps"
+    FULL = "full"
+
+
+class ExportInstanceRequest(BaseModel):
+    """Request to export an instance for deployment elsewhere."""
+
+    format: ExportFormat = Field(
+        default=ExportFormat.DOCKER_COMPOSE,
+        description="Export format",
+    )
+    scope: ExportScope = Field(
+        default=ExportScope.CONFIG_AND_APPS,
+        description="What to include",
+    )
+    include_credentials: bool = Field(
+        default=False,
+        description="Include passwords (not recommended for sharing)",
+    )
+
+
+class ExportFormatInfo(BaseModel):
+    """Information about an export format."""
+
+    id: str
+    name: str
+    description: str
+    use_case: str
+
+
+class ExportFormatsResponse(BaseModel):
+    """List of available export formats."""
+
+    formats: list[ExportFormatInfo]
+
+
+@router.get("/{instance_id}/export/formats", response_model=ExportFormatsResponse)
+async def list_export_formats(instance_id: str) -> ExportFormatsResponse:
+    """
+    List available export formats for deploying this instance elsewhere.
+
+    Returns all supported formats with descriptions and use cases.
+    """
+    instance = await instance_manager.get_instance(instance_id)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    formats = [
+        ExportFormatInfo(
+            id=ExportFormat.DOCKER_COMPOSE.value,
+            name="Docker Compose",
+            description="Ready-to-run docker-compose.yml with configuration files",
+            use_case="Local development, single-server Docker deployment",
+        ),
+        ExportFormatInfo(
+            id=ExportFormat.KUBERNETES.value,
+            name="Kubernetes",
+            description="Kubernetes manifests and optional Helm chart",
+            use_case="Container orchestration, cloud-native deployment",
+        ),
+        ExportFormatInfo(
+            id=ExportFormat.ANSIBLE.value,
+            name="Ansible",
+            description="Ansible playbook and roles for automated deployment",
+            use_case="Multi-server deployment, configuration management",
+        ),
+        ExportFormatInfo(
+            id=ExportFormat.BARE_METAL.value,
+            name="Bare Metal",
+            description="Installation scripts and systemd service files",
+            use_case="Traditional server deployment, on-premises",
+        ),
+        ExportFormatInfo(
+            id=ExportFormat.TERRAFORM.value,
+            name="Terraform",
+            description="Terraform configuration for AWS deployment",
+            use_case="Infrastructure as Code, cloud deployment",
+        ),
+    ]
+
+    return ExportFormatsResponse(formats=formats)
+
+
+@router.get("/{instance_id}/export/preview")
+async def preview_instance_export(
+    instance_id: str,
+    format: ExportFormat = Query(default=ExportFormat.DOCKER_COMPOSE),
+) -> dict:
+    """
+    Preview what will be included in an export.
+
+    Returns a summary of configuration files, apps, dashboards,
+    and saved searches that will be exported.
+    """
+    instance = await instance_manager.get_instance(instance_id)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    if instance.status != "running":
+        raise HTTPException(
+            status_code=400,
+            detail="Instance must be running to preview export. Please start the instance first.",
+        )
+
+    # Import here to avoid circular imports
+    from faux_splunk_cloud.services.instance_export import (
+        ExportScope as ServiceExportScope,
+        instance_export_service,
+    )
+
+    try:
+        configs = await instance_export_service._extract_configs(
+            instance=instance,
+            scope=ServiceExportScope.CONFIG_AND_APPS,
+        )
+
+        return {
+            "instance_id": instance.id,
+            "instance_name": instance.name,
+            "format": format.value,
+            "preview": {
+                "config_files": list(configs["etc"].keys()),
+                "apps": [app["name"] for app in configs["apps"]],
+                "saved_searches_count": len(configs["saved_searches"]),
+                "dashboards_count": len(configs["dashboards"]),
+                "indexes_count": len(configs["indexes"]),
+            },
+            "estimated_size_kb": sum(len(v) for v in configs["etc"].values()) // 1024 + 10,
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview failed: {e}")
+
+
+@router.post("/{instance_id}/export")
+async def export_instance_deployment(
+    instance_id: str,
+    request: ExportInstanceRequest,
+    _: Annotated[str, Depends(require_auth)],
+) -> StreamingResponse:
+    """
+    Export an instance for deployment on your own infrastructure.
+
+    Downloads a tar.gz archive containing all necessary files to deploy
+    the same Splunk configuration on Docker, Kubernetes, bare metal, or cloud.
+
+    ## Export Formats
+
+    - **docker-compose**: Ready-to-run Docker Compose deployment
+    - **kubernetes**: Kubernetes manifests and Helm chart
+    - **ansible**: Ansible playbook for automated deployment
+    - **bare-metal**: Installation scripts for traditional servers
+    - **terraform**: Terraform configuration for AWS
+
+    ## Export Scope
+
+    - **config-only**: Only configuration files (smallest)
+    - **config-and-apps**: Configuration + installed apps (recommended)
+    - **full**: Everything including index data (can be very large!)
+
+    ## Security Note
+
+    By default, credentials are NOT included in the export.
+    Set `include_credentials: true` only if you understand the risks
+    and need to replicate exact credentials.
+    """
+    instance = await instance_manager.get_instance(instance_id)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    if instance.status != "running":
+        raise HTTPException(
+            status_code=400,
+            detail="Instance must be running to export. Please start the instance first.",
+        )
+
+    # Import here to avoid circular imports
+    from faux_splunk_cloud.services.instance_export import (
+        ExportFormat as ServiceExportFormat,
+        ExportScope as ServiceExportScope,
+        instance_export_service,
+    )
+
+    try:
+        # Map API enums to service enums
+        service_format = ServiceExportFormat(request.format.value)
+        service_scope = ServiceExportScope(request.scope.value)
+
+        export_data, filename = await instance_export_service.export_instance(
+            instance=instance,
+            format=service_format,
+            scope=service_scope,
+            include_credentials=request.include_credentials,
+        )
+
+        return StreamingResponse(
+            iter([export_data]),
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(export_data)),
+            },
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}")

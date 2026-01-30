@@ -8,6 +8,8 @@
 #
 # Reference: Splunk Validated Architectures - Distributed Non-Clustered (S1)
 # https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
+#
+# Optimized for ARM64 emulation (x86 images via Rosetta/QEMU)
 
 version: "3.8"
 
@@ -33,6 +35,7 @@ services:
   # =========================================================================
   search-head:
     image: {{ splunk_image }}
+    platform: linux/amd64  # Splunk doesn't have ARM64 images
     container_name: {{ instance_id }}_sh
     hostname: search-head
     networks:
@@ -49,7 +52,8 @@ services:
       SPLUNK_ROLE: "splunk_search_head"
       SPLUNK_INDEXER_URL: "indexer"
       SPLUNK_SEARCH_HEAD_URL: "search-head"
-      # Victoria Experience: real-time search enabled by default
+      SPLUNK_DISABLE_POPUPS: "true"
+      SPLUNK_LAUNCH_CONF: "OPTIMISTIC_ABOUT_FILE_LOCKING=1"
       {% if enable_realtime_search %}
       SPLUNK_BEFORE_START_CMD_1: "version ${SPLUNK_START_ARGS}"
       {% endif %}
@@ -60,17 +64,19 @@ services:
       - {{ custom_configs_path }}:/opt/splunk/etc/apps/faux_splunk_config:ro
       {% endif %}
     mem_limit: {{ memory_limit }}m
+    mem_reservation: {{ (memory_limit * 0.5) | int }}m
     cpus: {{ cpu_limit }}
     restart: unless-stopped
+    stop_grace_period: 60s
     depends_on:
       indexer:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 180s
+      test: ["CMD", "curl", "-k", "-f", "--max-time", "10", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 45s
+      timeout: 20s
+      retries: 15
+      start_period: 300s
     labels:
       com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
       com.faux-splunk-cloud.role: "search_head"
@@ -83,6 +89,7 @@ services:
   # =========================================================================
   indexer:
     image: {{ splunk_image }}
+    platform: linux/amd64  # Splunk doesn't have ARM64 images
     container_name: {{ instance_id }}_idx
     hostname: indexer
     networks:
@@ -100,6 +107,8 @@ services:
       SPLUNK_LICENSE_URI: "Free"
       SPLUNK_ROLE: "splunk_indexer"
       SPLUNK_ENABLE_LISTEN: "9997"
+      SPLUNK_DISABLE_POPUPS: "true"
+      SPLUNK_LAUNCH_CONF: "OPTIMISTIC_ABOUT_FILE_LOCKING=1"
     volumes:
       - idx_var:/opt/splunk/var
       - idx_etc:/opt/splunk/etc
@@ -107,14 +116,16 @@ services:
       - {{ custom_configs_path }}:/opt/splunk/etc/apps/faux_splunk_config:ro
       {% endif %}
     mem_limit: {{ memory_limit }}m
+    mem_reservation: {{ (memory_limit * 0.5) | int }}m
     cpus: {{ cpu_limit }}
     restart: unless-stopped
+    stop_grace_period: 60s
     healthcheck:
-      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
+      test: ["CMD", "curl", "-k", "-f", "--max-time", "10", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 45s
+      timeout: 20s
+      retries: 15
+      start_period: 240s
     labels:
       com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
       com.faux-splunk-cloud.role: "indexer"

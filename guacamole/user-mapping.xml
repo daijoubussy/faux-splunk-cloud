@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Guacamole User Mapping Configuration
+
+  This file defines users and their connection permissions.
+  In production, use a proper database-backed authentication like LDAP, CAS, or SAML.
+
+  To add dynamic connections for Splunk instances, the API should generate
+  connection tokens and register them via the Guacamole REST API.
+-->
+<user-mapping>
+    <!-- Default admin user -->
+    <authorize username="admin" password="admin">
+        <!-- Placeholder connection - actual connections are managed by the API -->
+        <connection name="Sample VNC Connection">
+            <protocol>vnc</protocol>
+            <param name="hostname">localhost</param>
+            <param name="port">5900</param>
+        </connection>
+    </authorize>
+
+    <!--
+      For dynamic connections, the Faux Splunk Cloud API will:
+      1. Start a VNC server in the Splunk container (x11vnc or similar)
+      2. Use the Guacamole REST API to create a temporary connection
+      3. Generate a connection token for the user
+      4. Return the token to the UI for embedding
+
+      See: https://guacamole.apache.org/doc/gug/guacamole-rest.html
+    -->
+</user-mapping>

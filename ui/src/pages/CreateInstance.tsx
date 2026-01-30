@@ -2,8 +2,322 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import styled from 'styled-components';
+import { variables, pick } from '@splunk/themes';
 import { instancesApi } from '../api';
+import { useTenantPath } from '../hooks/useTenantPath';
 import type { InstanceCreate } from '../types';
+
+// ============================================================================
+// Styled Components
+// ============================================================================
+
+const PageContainer = styled.div`
+  max-width: 48rem;
+  margin: 0 auto;
+`;
+
+const PageHeader = styled.div`
+  margin-bottom: 1.5rem;
+`;
+
+const PageTitle = styled.h1`
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const PageDescription = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const Form = styled.form`
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+`;
+
+const Card = styled.div`
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorSidebar, light: variables.backgroundColorSidebar },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+`;
+
+const CardTitle = styled.h2`
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0 0 1rem;
+`;
+
+const FormGroup = styled.div`
+  margin-top: 1rem;
+
+  &:first-of-type {
+    margin-top: 0;
+  }
+`;
+
+const Label = styled.label`
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin-bottom: 0.25rem;
+`;
+
+const Input = styled.input`
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.375rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+
+  &:focus {
+    outline: none;
+    border-color: ${variables.accentColorPositive};
+    box-shadow: 0 0 0 2px rgba(0, 201, 125, 0.2);
+  }
+
+  &::placeholder {
+    color: ${pick({
+      prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+    })};
+  }
+`;
+
+const SmallInput = styled(Input)`
+  width: 8rem;
+`;
+
+const Select = styled.select`
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+
+  &:focus {
+    outline: none;
+    border-color: ${variables.accentColorPositive};
+    box-shadow: 0 0 0 2px rgba(0, 201, 125, 0.2);
+  }
+`;
+
+const HelpText = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const TopologyGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+
+  @media (min-width: 640px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+`;
+
+interface TopologyOptionProps {
+  $selected: boolean;
+}
+
+const TopologyOption = styled.label<TopologyOptionProps>`
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  cursor: pointer;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid ${props => props.$selected
+    ? variables.accentColorPositive
+    : pick({ prisma: { dark: variables.borderColor, light: variables.borderColor } })};
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage },
+  })};
+  transition: border-color 0.2s, box-shadow 0.2s;
+
+  ${props => props.$selected && `
+    box-shadow: 0 0 0 2px rgba(0, 201, 125, 0.2);
+  `}
+
+  &:hover {
+    border-color: ${variables.accentColorPositive};
+  }
+
+  input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+`;
+
+const TopologyName = styled.span`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+`;
+
+const TopologyDescription = styled.span`
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const TopologyResources = styled.span`
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+`;
+
+const CheckboxGroup = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+`;
+
+const CheckboxLabel = styled.label`
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+`;
+
+const Checkbox = styled.input`
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage },
+  })};
+  cursor: pointer;
+  accent-color: ${variables.accentColorPositive};
+`;
+
+const CheckboxText = styled.span`
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+`;
+
+const TwoColumnGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+
+  @media (min-width: 640px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+`;
+
+const PrimaryButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  background-color: ${variables.accentColorPositive};
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover:not(:disabled) {
+    background-color: #00a86b;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
+const SecondaryButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  background-color: transparent;
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: ${pick({
+      prisma: { dark: variables.backgroundColorHover, light: variables.backgroundColorHover },
+    })};
+  }
+`;
+
+// ============================================================================
+// Config
+// ============================================================================
 
 const topologies = [
   {
@@ -32,9 +346,14 @@ const topologies = [
   },
 ];
 
+// ============================================================================
+// Main Component
+// ============================================================================
+
 export default function CreateInstance() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { toPath } = useTenantPath();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -52,7 +371,7 @@ export default function CreateInstance() {
     onSuccess: (instance) => {
       toast.success('Instance created! Starting...');
       queryClient.invalidateQueries({ queryKey: ['instances'] });
-      navigate(`/instances/${instance.id}`);
+      navigate(toPath(`instances/${instance.id}`));
     },
     onError: (err: Error) => {
       toast.error(`Failed to create instance: ${err.message}`);
@@ -82,24 +401,22 @@ export default function CreateInstance() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Create New Instance</h1>
-        <p className="mt-1 text-sm text-gray-500">
+    <PageContainer>
+      <PageHeader>
+        <PageTitle>Create New Instance</PageTitle>
+        <PageDescription>
           Provision an ephemeral Splunk Cloud Victoria instance
-        </p>
-      </div>
+        </PageDescription>
+      </PageHeader>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <Form onSubmit={handleSubmit}>
         {/* Name */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Basic Information</h2>
+        <Card>
+          <CardTitle>Basic Information</CardTitle>
 
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-              Instance Name
-            </label>
-            <input
+          <FormGroup>
+            <Label htmlFor="name">Instance Name</Label>
+            <Input
               type="text"
               id="name"
               value={formData.name}
@@ -107,45 +424,35 @@ export default function CreateInstance() {
               placeholder="my-test-splunk"
               pattern="^[a-z][a-z0-9-]*[a-z0-9]$"
               required
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-splunk-green focus:ring-splunk-green sm:text-sm"
             />
-            <p className="mt-1 text-xs text-gray-500">
-              Lowercase letters, numbers, and hyphens only
-            </p>
-          </div>
+            <HelpText>Lowercase letters, numbers, and hyphens only</HelpText>
+          </FormGroup>
 
-          <div className="mt-4">
-            <label htmlFor="ttl" className="block text-sm font-medium text-gray-700">
-              Time to Live (hours)
-            </label>
-            <input
+          <FormGroup>
+            <Label htmlFor="ttl">Time to Live (hours)</Label>
+            <SmallInput
               type="number"
               id="ttl"
               value={formData.ttl_hours}
               onChange={(e) => setFormData({ ...formData, ttl_hours: parseInt(e.target.value) })}
               min={1}
               max={168}
-              className="mt-1 block w-32 rounded-md border-gray-300 shadow-sm focus:border-splunk-green focus:ring-splunk-green sm:text-sm"
             />
-            <p className="mt-1 text-xs text-gray-500">
+            <HelpText>
               Instance will be automatically destroyed after this time (max 168 hours / 1 week)
-            </p>
-          </div>
-        </div>
+            </HelpText>
+          </FormGroup>
+        </Card>
 
         {/* Topology */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Topology</h2>
+        <Card>
+          <CardTitle>Topology</CardTitle>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <TopologyGrid>
             {topologies.map((topology) => (
-              <label
+              <TopologyOption
                 key={topology.id}
-                className={`relative flex cursor-pointer rounded-lg border p-4 shadow-sm focus:outline-none ${
-                  formData.topology === topology.id
-                    ? 'border-splunk-green ring-2 ring-splunk-green'
-                    : 'border-gray-300'
-                }`}
+                $selected={formData.topology === topology.id}
               >
                 <input
                   type="radio"
@@ -153,118 +460,95 @@ export default function CreateInstance() {
                   value={topology.id}
                   checked={formData.topology === topology.id}
                   onChange={(e) => setFormData({ ...formData, topology: e.target.value })}
-                  className="sr-only"
                 />
-                <div className="flex flex-1 flex-col">
-                  <span className="block text-sm font-medium text-gray-900">{topology.name}</span>
-                  <span className="mt-1 text-xs text-gray-500">{topology.description}</span>
-                  <span className="mt-2 text-xs font-medium text-gray-700">{topology.resources}</span>
-                </div>
-                {formData.topology === topology.id && (
-                  <div className="absolute -inset-px rounded-lg border-2 border-splunk-green pointer-events-none" />
-                )}
-              </label>
+                <TopologyName>{topology.name}</TopologyName>
+                <TopologyDescription>{topology.description}</TopologyDescription>
+                <TopologyResources>{topology.resources}</TopologyResources>
+              </TopologyOption>
             ))}
-          </div>
-        </div>
+          </TopologyGrid>
+        </Card>
 
         {/* Victoria Options */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Victoria Experience Options</h2>
+        <Card>
+          <CardTitle>Victoria Experience Options</CardTitle>
 
-          <div className="space-y-4">
-            <label className="flex items-center">
-              <input
+          <CheckboxGroup>
+            <CheckboxLabel>
+              <Checkbox
                 type="checkbox"
                 checked={formData.enable_hec}
                 onChange={(e) => setFormData({ ...formData, enable_hec: e.target.checked })}
-                className="h-4 w-4 rounded border-gray-300 text-splunk-green focus:ring-splunk-green"
               />
-              <span className="ml-2 text-sm text-gray-700">Enable HTTP Event Collector (HEC)</span>
-            </label>
+              <CheckboxText>Enable HTTP Event Collector (HEC)</CheckboxText>
+            </CheckboxLabel>
 
-            <label className="flex items-center">
-              <input
+            <CheckboxLabel>
+              <Checkbox
                 type="checkbox"
                 checked={formData.enable_realtime_search}
                 onChange={(e) => setFormData({ ...formData, enable_realtime_search: e.target.checked })}
-                className="h-4 w-4 rounded border-gray-300 text-splunk-green focus:ring-splunk-green"
               />
-              <span className="ml-2 text-sm text-gray-700">Enable Real-time Search</span>
-            </label>
+              <CheckboxText>Enable Real-time Search</CheckboxText>
+            </CheckboxLabel>
 
-            <label className="flex items-center">
-              <input
+            <CheckboxLabel>
+              <Checkbox
                 type="checkbox"
                 checked={formData.create_default_indexes}
                 onChange={(e) => setFormData({ ...formData, create_default_indexes: e.target.checked })}
-                className="h-4 w-4 rounded border-gray-300 text-splunk-green focus:ring-splunk-green"
               />
-              <span className="ml-2 text-sm text-gray-700">Create Default Indexes (main, summary, etc.)</span>
-            </label>
-          </div>
-        </div>
+              <CheckboxText>Create Default Indexes (main, summary, etc.)</CheckboxText>
+            </CheckboxLabel>
+          </CheckboxGroup>
+        </Card>
 
         {/* Resources */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Resources</h2>
+        <Card>
+          <CardTitle>Resources</CardTitle>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="memory" className="block text-sm font-medium text-gray-700">
-                Memory (MB)
-              </label>
-              <select
+          <TwoColumnGrid>
+            <FormGroup>
+              <Label htmlFor="memory">Memory (MB)</Label>
+              <Select
                 id="memory"
                 value={formData.memory_mb}
                 onChange={(e) => setFormData({ ...formData, memory_mb: parseInt(e.target.value) })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-splunk-green focus:ring-splunk-green sm:text-sm"
               >
                 <option value={512}>512 MB</option>
                 <option value={1024}>1 GB</option>
                 <option value={2048}>2 GB</option>
                 <option value={4096}>4 GB</option>
                 <option value={8192}>8 GB</option>
-              </select>
-            </div>
+              </Select>
+            </FormGroup>
 
-            <div>
-              <label htmlFor="cpu" className="block text-sm font-medium text-gray-700">
-                CPU Cores
-              </label>
-              <select
+            <FormGroup>
+              <Label htmlFor="cpu">CPU Cores</Label>
+              <Select
                 id="cpu"
                 value={formData.cpu_cores}
                 onChange={(e) => setFormData({ ...formData, cpu_cores: parseFloat(e.target.value) })}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-splunk-green focus:ring-splunk-green sm:text-sm"
               >
                 <option value={0.5}>0.5 cores</option>
                 <option value={1.0}>1.0 cores</option>
                 <option value={2.0}>2.0 cores</option>
                 <option value={4.0}>4.0 cores</option>
-              </select>
-            </div>
-          </div>
-        </div>
+              </Select>
+            </FormGroup>
+          </TwoColumnGrid>
+        </Card>
 
         {/* Submit */}
-        <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => navigate('/instances')}
-            className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-          >
+        <ButtonGroup>
+          <SecondaryButton type="button" onClick={() => navigate(toPath('instances'))}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={createMutation.isPending}
-            className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-splunk-green hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          </SecondaryButton>
+          <PrimaryButton type="submit" disabled={createMutation.isPending}>
             {createMutation.isPending ? 'Creating...' : 'Create Instance'}
-          </button>
-        </div>
-      </form>
-    </div>
+          </PrimaryButton>
+        </ButtonGroup>
+      </Form>
+    </PageContainer>
   );
 }

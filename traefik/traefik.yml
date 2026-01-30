@@ -1,0 +1,33 @@
+api:
+  dashboard: true
+  insecure: true
+
+log:
+  level: INFO
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: fsc-network
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  step-ca:
+    acme:
+      email: admin@faux-splunk.local
+      storage: /acme/acme.json
+      caServer: https://step-ca:9000/acme/acme/directory
+      tlsChallenge: true

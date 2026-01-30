@@ -203,6 +203,9 @@ class Instance(BaseModel):
     # Unique identifier
     id: str = Field(description="Unique instance ID")
 
+    # Tenant ownership
+    tenant_id: str | None = Field(default=None, description="Tenant ID that owns this instance")
+
     # User-provided name
     name: str = Field(description="Instance name")
 

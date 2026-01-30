@@ -37,6 +37,8 @@ class SplunkClientService:
 
     Uses the splunk-sdk-python for all operations to ensure compatibility
     with Splunk Cloud Victoria Experience.
+
+    Optimized for ARM64 emulation with extended timeouts and retry logic.
     """
 
     def __init__(
@@ -47,6 +49,7 @@ class SplunkClientService:
         password: str | None = None,
         token: str | None = None,
         verify_ssl: bool = False,
+        timeout: int = 60,
     ) -> None:
         """
         Initialize the Splunk client service.
@@ -58,6 +61,7 @@ class SplunkClientService:
             password: Admin password
             token: Authentication token (alternative to password)
             verify_ssl: Whether to verify SSL certificates
+            timeout: Connection timeout in seconds (default 60 for emulation)
         """
         self._host = host
         self._port = port
@@ -65,7 +69,24 @@ class SplunkClientService:
         self._password = password
         self._token = token
         self._verify_ssl = verify_ssl
+        self._timeout = timeout
         self._service: splunk_client.Service | None = None
+
+    def is_connected(self) -> bool:
+        """Check if client is connected and session is valid."""
+        if self._service is None:
+            return False
+        try:
+            # Try a lightweight operation to verify connection
+            _ = self._service.info
+            return True
+        except Exception:
+            return False
+
+    def connect(self) -> None:
+        """Establish connection to Splunk (or reconnect if disconnected)."""
+        self._service = None  # Reset to force reconnection
+        self._get_service()
 
     def _get_service(self) -> splunk_client.Service:
         """Get or create the Splunk service connection."""
@@ -74,6 +95,7 @@ class SplunkClientService:
                 "host": self._host,
                 "port": self._port,
                 "username": self._username,
+                "timeout": self._timeout,
             }
 
             if self._token:
@@ -88,7 +110,12 @@ class SplunkClientService:
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
 
-            self._service = splunk_client.connect(**connect_args)
+            try:
+                self._service = splunk_client.connect(**connect_args)
+                logger.debug(f"Connected to Splunk at {self._host}:{self._port}")
+            except Exception as e:
+                logger.error(f"Failed to connect to Splunk at {self._host}:{self._port}: {e}")
+                raise
 
         return self._service
 

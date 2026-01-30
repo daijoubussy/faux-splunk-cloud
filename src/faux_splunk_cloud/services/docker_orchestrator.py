@@ -3,11 +3,15 @@ Docker orchestration service for ephemeral Splunk instances.
 
 This service manages the lifecycle of Docker containers that make up
 each ephemeral Splunk Cloud Victoria instance.
+
+Optimized for ARM64 emulation (running x86 containers via Rosetta/QEMU).
 """
 
 import asyncio
 import logging
+import os
 import secrets
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +42,11 @@ class DockerOrchestrator:
     - Docker volumes
     - Docker containers (via docker-compose)
     - Port allocation
+
+    Optimized for:
+    - ARM64 emulation overhead
+    - Docker-in-Docker (DinD) deployments
+    - Low-latency user experience
     """
 
     # Port ranges for instance allocation
@@ -46,8 +55,14 @@ class DockerOrchestrator:
     HEC_PORT_START = 18088
     S2S_PORT_START = 19997
 
+    # Emulation-aware timeouts (seconds)
+    COMPOSE_UP_TIMEOUT = 120  # Longer for image pull under emulation
+    COMPOSE_DOWN_TIMEOUT = 90
+    HEALTH_CHECK_INTERVAL = 10  # Seconds between health checks
+    HEALTH_CHECK_RETRIES = 30  # More retries for slow emulation startup
+
     def __init__(self) -> None:
-        self._client = docker.from_env()
+        self._client: docker.DockerClient | None = None
         self._template_env = Environment(
             loader=FileSystemLoader(
                 Path(__file__).parent.parent / "templates"
@@ -55,6 +70,31 @@ class DockerOrchestrator:
             autoescape=False,
         )
         self._allocated_ports: set[int] = set()
+        self._docker_host = os.environ.get("DOCKER_HOST", settings.docker_host)
+
+    @property
+    def client(self) -> docker.DockerClient:
+        """Lazy-load Docker client with connection pooling."""
+        if self._client is None:
+            if self._docker_host.startswith("tcp://"):
+                # DinD connection - use TCP with optimized settings
+                self._client = docker.DockerClient(
+                    base_url=self._docker_host,
+                    timeout=60,  # Longer timeout for emulation
+                )
+            else:
+                # Local socket connection
+                self._client = docker.from_env(timeout=60)
+        return self._client
+
+    def _reset_client(self) -> None:
+        """Reset Docker client on connection errors."""
+        if self._client:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+        self._client = None
 
     def _allocate_port(self, start: int, count: int = 1) -> list[int]:
         """Allocate available ports starting from a base port."""
@@ -376,38 +416,59 @@ class DockerOrchestrator:
             shutil.rmtree(instance_dir)
 
     async def check_instance_health(self, instance: Instance) -> InstanceStatus:
-        """Check the health status of an instance."""
+        """
+        Check the health status of an instance.
+
+        Optimized for emulation with caching and retry logic.
+        """
         if not instance.container_ids:
             return InstanceStatus.ERROR
 
         try:
             all_healthy = True
             any_running = False
+            any_starting = False
 
             for container_id in instance.container_ids:
                 try:
-                    container = self._client.containers.get(container_id)
+                    # Use cached client property
+                    container = self.client.containers.get(container_id)
+                    # Refresh to get latest state
+                    container.reload()
                     state = container.attrs.get("State", {})
 
                     if state.get("Running", False):
                         any_running = True
                         health = state.get("Health", {})
-                        if health and health.get("Status") != "healthy":
+                        health_status = health.get("Status", "none") if health else "none"
+
+                        if health_status == "healthy":
+                            pass  # Container is healthy
+                        elif health_status == "starting":
+                            any_starting = True
+                            all_healthy = False
+                        elif health_status == "none":
+                            # No healthcheck defined, consider running as healthy
+                            pass
+                        else:
                             all_healthy = False
                     else:
                         all_healthy = False
                 except NotFound:
                     all_healthy = False
 
-            if all_healthy and any_running:
+            if all_healthy and any_running and not any_starting:
                 return InstanceStatus.RUNNING
-            elif any_running:
+            elif any_running or any_starting:
                 return InstanceStatus.STARTING
             else:
                 return InstanceStatus.STOPPED
 
         except APIError as e:
             logger.error(f"Docker API error checking health: {e}")
+            # Reset client on connection errors
+            if "Connection" in str(e) or "timeout" in str(e).lower():
+                self._reset_client()
             return InstanceStatus.ERROR
 
     async def get_container_logs(
@@ -418,12 +479,15 @@ class DockerOrchestrator:
 
         for container_id in instance.container_ids:
             try:
-                container = self._client.containers.get(container_id)
+                container = self.client.containers.get(container_id)
                 if container_name and container_name not in container.name:
                     continue
                 container_logs = container.logs(tail=tail).decode()
                 logs.append(f"=== {container.name} ===\n{container_logs}")
             except NotFound:
+                continue
+            except APIError as e:
+                logger.warning(f"Failed to get logs for container {container_id}: {e}")
                 continue
 
         return "\n\n".join(logs)

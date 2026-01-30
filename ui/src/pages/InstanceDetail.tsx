@@ -3,32 +3,455 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
+import styled from 'styled-components';
+import { variables, pick } from '@splunk/themes';
 import {
   PlayIcon,
   StopIcon,
   TrashIcon,
   ClockIcon,
-  ArrowTopRightOnSquareIcon,
   ClipboardIcon,
   ShieldExclamationIcon,
 } from '@heroicons/react/24/outline';
 import { instancesApi, attacksApi } from '../api';
+import { useTenantPath } from '../hooks/useTenantPath';
+import { SplunkViewer } from '../components/SplunkViewer';
 import type { Instance } from '../types';
 
-function StatusBadge({ status }: { status: Instance['status'] }) {
-  const colors: Record<string, string> = {
-    running: 'bg-green-100 text-green-800',
-    starting: 'bg-yellow-100 text-yellow-800 animate-pulse',
-    stopped: 'bg-gray-100 text-gray-800',
-    error: 'bg-red-100 text-red-800',
-    pending: 'bg-blue-100 text-blue-800',
-    provisioning: 'bg-blue-100 text-blue-800 animate-pulse',
-  };
+// ============================================================================
+// Styled Components
+// ============================================================================
 
+const PageContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+`;
+
+const Header = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+`;
+
+const HeaderLeft = styled.div``;
+
+const TitleRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+`;
+
+const PageTitle = styled.h1`
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const InstanceId = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  font-family: monospace;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 0.5rem;
+`;
+
+interface ActionButtonProps {
+  $variant: 'success' | 'warning' | 'danger';
+}
+
+const ActionButton = styled.button<ActionButtonProps>`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  ${props => {
+    switch (props.$variant) {
+      case 'success':
+        return `
+          background-color: #22c55e;
+          &:hover:not(:disabled) { background-color: #16a34a; }
+        `;
+      case 'warning':
+        return `
+          background-color: #eab308;
+          &:hover:not(:disabled) { background-color: #ca8a04; }
+        `;
+      case 'danger':
+        return `
+          background-color: #ef4444;
+          &:hover:not(:disabled) { background-color: #dc2626; }
+        `;
+    }
+  }}
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.25rem;
+  }
+`;
+
+interface BadgeProps {
+  $variant: 'success' | 'warning' | 'error' | 'info' | 'default';
+  $pulse?: boolean;
+}
+
+const Badge = styled.span<BadgeProps>`
+  display: inline-flex;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  ${props => props.$pulse && 'animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;'}
+
+  ${props => {
+    switch (props.$variant) {
+      case 'success':
+        return `
+          background-color: rgba(34, 197, 94, 0.2);
+          color: #22c55e;
+        `;
+      case 'warning':
+        return `
+          background-color: rgba(234, 179, 8, 0.2);
+          color: #eab308;
+        `;
+      case 'error':
+        return `
+          background-color: rgba(239, 68, 68, 0.2);
+          color: #ef4444;
+        `;
+      case 'info':
+        return `
+          background-color: rgba(59, 130, 246, 0.2);
+          color: #3b82f6;
+        `;
+      default:
+        return `
+          background-color: rgba(156, 163, 175, 0.2);
+          color: #9ca3af;
+        `;
+    }
+  }}
+`;
+
+const TwoColumnGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+
+  @media (min-width: 1024px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+`;
+
+const Card = styled.div`
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorSidebar, light: variables.backgroundColorSidebar },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.5rem;
+`;
+
+const CardHeader = styled.div`
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+`;
+
+const CardTitle = styled.h3`
+  font-size: 1rem;
+  font-weight: 600;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const CardBody = styled.div`
+  padding: 1.5rem;
+`;
+
+const InfoList = styled.dl``;
+
+const InfoRow = styled.div`
+  padding: 0.75rem 0;
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 1rem;
+  align-items: center;
+  border-bottom: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+const InfoLabel = styled.dt`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const InfoValue = styled.dd`
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: monospace;
+  word-break: break-all;
+  margin: 0;
+`;
+
+const CopyBtn = styled.button`
+  padding: 0.25rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  transition: color 0.2s;
+
+  &:hover {
+    color: ${pick({
+      prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+    })};
+  }
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+  }
+`;
+
+const SmallBtn = styled.button`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  background-color: transparent;
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: ${pick({
+      prisma: { dark: variables.backgroundColorHover, light: variables.backgroundColorHover },
+    })};
+  }
+
+  svg {
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-right: 0.25rem;
+  }
+`;
+
+const Description = styled.p`
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  margin-bottom: 1rem;
+`;
+
+const AttackButtonGroup = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+`;
+
+interface AttackButtonProps {
+  $color: string;
+}
+
+const AttackButton = styled.button<AttackButtonProps>`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: white;
+  background-color: ${props => props.$color};
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  &:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  svg {
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-right: 0.25rem;
+  }
+`;
+
+const CardLink = styled(Link)`
+  display: inline-block;
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: ${variables.accentColorPositive};
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const ToggleButton = styled.button`
+  font-size: 0.875rem;
+  color: ${variables.accentColorPositive};
+  background: transparent;
+  border: none;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const LogsCard = styled(Card)``;
+
+const LogsHeader = styled(CardHeader)`
+  flex-wrap: wrap;
+  gap: 0.5rem;
+`;
+
+const LogsControls = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+`;
+
+const LogsSelect = styled.select`
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.375rem;
+`;
+
+const LogsContent = styled.pre`
+  font-size: 0.75rem;
+  font-family: monospace;
+  background-color: #111;
+  color: #f5f5f5;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  max-height: 24rem;
+  margin: 0;
+`;
+
+const LoadingText = styled.div`
+  padding: 2rem;
+  text-align: center;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const ErrorText = styled.p`
+  color: #ef4444;
+`;
+
+const BackLink = styled(Link)`
+  margin-top: 0.5rem;
+  display: inline-block;
+  color: ${variables.accentColorPositive};
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+// ============================================================================
+// Helper Components
+// ============================================================================
+
+function getStatusVariant(status: string): BadgeProps['$variant'] {
+  switch (status) {
+    case 'running':
+      return 'success';
+    case 'starting':
+    case 'provisioning':
+      return 'warning';
+    case 'pending':
+      return 'info';
+    case 'error':
+      return 'error';
+    default:
+      return 'default';
+  }
+}
+
+function shouldPulse(status: string): boolean {
+  return ['starting', 'provisioning'].includes(status);
+}
+
+function StatusBadge({ status }: { status: Instance['status'] }) {
   return (
-    <span className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${colors[status] || 'bg-gray-100'}`}>
+    <Badge $variant={getStatusVariant(status)} $pulse={shouldPulse(status)}>
       {status}
-    </span>
+    </Badge>
   );
 }
 
@@ -39,27 +462,23 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   };
 
   return (
-    <button
-      onClick={handleCopy}
-      className="p-1 text-gray-400 hover:text-gray-600"
-      title={`Copy ${label}`}
-    >
-      <ClipboardIcon className="h-4 w-4" />
-    </button>
+    <CopyBtn onClick={handleCopy} title={`Copy ${label}`}>
+      <ClipboardIcon />
+    </CopyBtn>
   );
 }
 
-function InfoRow({ label, value, copyable = false }: { label: string; value: string | null; copyable?: boolean }) {
+function InfoItem({ label, value, copyable = false }: { label: string; value: string | null; copyable?: boolean }) {
   if (!value) return null;
 
   return (
-    <div className="py-3 sm:grid sm:grid-cols-3 sm:gap-4">
-      <dt className="text-sm font-medium text-gray-500">{label}</dt>
-      <dd className="mt-1 flex items-center gap-2 text-sm text-gray-900 sm:col-span-2 sm:mt-0">
-        <span className="font-mono break-all">{value}</span>
+    <InfoRow>
+      <InfoLabel>{label}</InfoLabel>
+      <InfoValue>
+        <span>{value}</span>
         {copyable && <CopyButton value={value} label={label} />}
-      </dd>
-    </div>
+      </InfoValue>
+    </InfoRow>
   );
 }
 
@@ -73,45 +492,39 @@ function LogViewer({ instanceId }: { instanceId: string }) {
   });
 
   return (
-    <div className="bg-white shadow rounded-lg">
-      <div className="px-4 py-5 sm:px-6 border-b border-gray-200 flex items-center justify-between">
-        <h3 className="text-lg font-medium text-gray-900">Container Logs</h3>
-        <div className="flex items-center gap-2">
-          <select
-            value={tail}
-            onChange={(e) => setTail(parseInt(e.target.value))}
-            className="text-sm border-gray-300 rounded-md"
-          >
+    <LogsCard>
+      <LogsHeader>
+        <CardTitle>Container Logs</CardTitle>
+        <LogsControls>
+          <LogsSelect value={tail} onChange={(e) => setTail(parseInt(e.target.value))}>
             <option value={50}>Last 50 lines</option>
             <option value={100}>Last 100 lines</option>
             <option value={500}>Last 500 lines</option>
-          </select>
-          <button
-            onClick={() => refetch()}
-            className="px-2 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            Refresh
-          </button>
-        </div>
-      </div>
-      <div className="p-4">
+          </LogsSelect>
+          <SmallBtn onClick={() => refetch()}>Refresh</SmallBtn>
+        </LogsControls>
+      </LogsHeader>
+      <CardBody>
         {isLoading ? (
-          <div className="text-gray-500">Loading logs...</div>
+          <LoadingText>Loading logs...</LoadingText>
         ) : (
-          <pre className="text-xs bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto max-h-96">
-            {logs || 'No logs available'}
-          </pre>
+          <LogsContent>{logs || 'No logs available'}</LogsContent>
         )}
-      </div>
-    </div>
+      </CardBody>
+    </LogsCard>
   );
 }
+
+// ============================================================================
+// Main Component
+// ============================================================================
 
 export default function InstanceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showLogs, setShowLogs] = useState(false);
+  const { toPath } = useTenantPath();
 
   const { data: instance, isLoading, error } = useQuery({
     queryKey: ['instance', id],
@@ -142,7 +555,7 @@ export default function InstanceDetail() {
     mutationFn: () => instancesApi.destroy(id!),
     onSuccess: () => {
       toast.success('Instance destroyed');
-      navigate('/instances');
+      navigate(toPath('instances'));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -165,22 +578,20 @@ export default function InstanceDetail() {
       }),
     onSuccess: (campaign) => {
       toast.success('Attack campaign started!');
-      navigate(`/attacks/campaigns/${campaign.id}`);
+      navigate(toPath(`attacks/campaigns/${campaign.id}`));
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
   if (isLoading) {
-    return <div className="text-center py-8">Loading...</div>;
+    return <LoadingText>Loading...</LoadingText>;
   }
 
   if (error || !instance) {
     return (
-      <div className="text-center py-8">
-        <p className="text-red-500">Failed to load instance</p>
-        <Link to="/instances" className="text-splunk-green hover:underline mt-2 inline-block">
-          Back to instances
-        </Link>
+      <div style={{ textAlign: 'center', padding: '2rem' }}>
+        <ErrorText>Failed to load instance</ErrorText>
+        <BackLink to={toPath('instances')}>Back to instances</BackLink>
       </div>
     );
   }
@@ -189,184 +600,158 @@ export default function InstanceDetail() {
   const canStop = ['running', 'starting'].includes(instance.status);
 
   return (
-    <div className="space-y-6">
+    <PageContainer>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">{instance.name}</h1>
+      <Header>
+        <HeaderLeft>
+          <TitleRow>
+            <PageTitle>{instance.name}</PageTitle>
             <StatusBadge status={instance.status} />
-          </div>
-          <p className="mt-1 text-sm text-gray-500 font-mono">{instance.id}</p>
-        </div>
-        <div className="flex gap-2">
+          </TitleRow>
+          <InstanceId>{instance.id}</InstanceId>
+        </HeaderLeft>
+        <ButtonGroup>
           {canStart && (
-            <button
+            <ActionButton
+              $variant="success"
               onClick={() => startMutation.mutate()}
               disabled={startMutation.isPending}
-              className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
             >
-              <PlayIcon className="h-4 w-4 mr-1" />
+              <PlayIcon />
               Start
-            </button>
+            </ActionButton>
           )}
           {canStop && (
-            <button
+            <ActionButton
+              $variant="warning"
               onClick={() => stopMutation.mutate()}
               disabled={stopMutation.isPending}
-              className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50"
             >
-              <StopIcon className="h-4 w-4 mr-1" />
+              <StopIcon />
               Stop
-            </button>
+            </ActionButton>
           )}
-          <button
+          <ActionButton
+            $variant="danger"
             onClick={() => {
               if (window.confirm('Destroy this instance?')) destroyMutation.mutate();
             }}
             disabled={destroyMutation.isPending}
-            className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
           >
-            <TrashIcon className="h-4 w-4 mr-1" />
+            <TrashIcon />
             Destroy
-          </button>
-        </div>
-      </div>
+          </ActionButton>
+        </ButtonGroup>
+      </Header>
 
-      {/* Quick Access */}
+      {/* Splunk Access Options */}
       {instance.status === 'running' && instance.endpoints.web_url && (
-        <div className="bg-splunk-green/10 border border-splunk-green rounded-lg p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium text-gray-900">Splunk is Ready!</h3>
-              <p className="text-sm text-gray-600">Access your Splunk instance</p>
-            </div>
-            <a
-              href={instance.endpoints.web_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-splunk-green hover:bg-green-600"
-            >
-              <ArrowTopRightOnSquareIcon className="h-4 w-4 mr-1" />
-              Open Splunk Web
-            </a>
-          </div>
-        </div>
+        <SplunkViewer
+          webUrl={instance.endpoints.web_url}
+          instanceId={instance.id}
+          instanceName={instance.name}
+        />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <TwoColumnGrid>
         {/* Instance Info */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
-            <h3 className="text-lg font-medium text-gray-900">Instance Information</h3>
-          </div>
-          <div className="px-4 py-5 sm:px-6">
-            <dl className="divide-y divide-gray-200">
-              <InfoRow label="Topology" value={instance.config.topology} />
-              <InfoRow label="Experience" value={instance.config.experience} />
-              <InfoRow label="Memory" value={`${instance.config.memory_mb} MB`} />
-              <InfoRow label="CPU" value={`${instance.config.cpu_cores} cores`} />
-              <InfoRow
-                label="Created"
-                value={format(new Date(instance.created_at), 'PPpp')}
-              />
-              <div className="py-3 sm:grid sm:grid-cols-3 sm:gap-4">
-                <dt className="text-sm font-medium text-gray-500">Expires</dt>
-                <dd className="mt-1 flex items-center gap-2 text-sm text-gray-900 sm:col-span-2 sm:mt-0">
+        <Card>
+          <CardHeader>
+            <CardTitle>Instance Information</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <InfoList>
+              <InfoItem label="Topology" value={instance.config.topology} />
+              <InfoItem label="Experience" value={instance.config.experience} />
+              <InfoItem label="Memory" value={`${instance.config.memory_mb} MB`} />
+              <InfoItem label="CPU" value={`${instance.config.cpu_cores} cores`} />
+              <InfoItem label="Created" value={format(new Date(instance.created_at), 'PPpp')} />
+              <InfoRow>
+                <InfoLabel>Expires</InfoLabel>
+                <InfoValue>
                   <span>{formatDistanceToNow(new Date(instance.expires_at), { addSuffix: true })}</span>
-                  <button
-                    onClick={() => extendMutation.mutate(24)}
-                    className="inline-flex items-center px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
-                  >
-                    <ClockIcon className="h-3 w-3 mr-1" />
+                  <SmallBtn onClick={() => extendMutation.mutate(24)}>
+                    <ClockIcon />
                     +24h
-                  </button>
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </div>
+                  </SmallBtn>
+                </InfoValue>
+              </InfoRow>
+            </InfoList>
+          </CardBody>
+        </Card>
 
         {/* Endpoints */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
-            <h3 className="text-lg font-medium text-gray-900">Endpoints</h3>
-          </div>
-          <div className="px-4 py-5 sm:px-6">
-            <dl className="divide-y divide-gray-200">
-              <InfoRow label="Web UI" value={instance.endpoints.web_url} copyable />
-              <InfoRow label="REST API" value={instance.endpoints.api_url} copyable />
-              <InfoRow label="HEC" value={instance.endpoints.hec_url} copyable />
-              <InfoRow label="ACS API" value={instance.endpoints.acs_url} copyable />
-            </dl>
-          </div>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Endpoints</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <InfoList>
+              <InfoItem label="Web UI" value={instance.endpoints.web_url} copyable />
+              <InfoItem label="REST API" value={instance.endpoints.api_url} copyable />
+              <InfoItem label="HEC" value={instance.endpoints.hec_url} copyable />
+              <InfoItem label="ACS API" value={instance.endpoints.acs_url} copyable />
+            </InfoList>
+          </CardBody>
+        </Card>
 
         {/* Credentials */}
         {instance.credentials && (
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
-              <h3 className="text-lg font-medium text-gray-900">Credentials</h3>
-            </div>
-            <div className="px-4 py-5 sm:px-6">
-              <dl className="divide-y divide-gray-200">
-                <InfoRow label="Username" value={instance.credentials.admin_username} copyable />
-                <InfoRow label="Password" value={instance.credentials.admin_password} copyable />
-                <InfoRow label="HEC Token" value={instance.credentials.hec_token} copyable />
-                <InfoRow label="ACS Token" value={instance.credentials.acs_token} copyable />
-              </dl>
-            </div>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Credentials</CardTitle>
+            </CardHeader>
+            <CardBody>
+              <InfoList>
+                <InfoItem label="Username" value={instance.credentials.admin_username} copyable />
+                <InfoItem label="Password" value={instance.credentials.admin_password} copyable />
+                <InfoItem label="HEC Token" value={instance.credentials.hec_token} copyable />
+                <InfoItem label="ACS Token" value={instance.credentials.acs_token} copyable />
+              </InfoList>
+            </CardBody>
+          </Card>
         )}
 
         {/* Attack Simulation */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
-            <h3 className="text-lg font-medium text-gray-900">Attack Simulation</h3>
-          </div>
-          <div className="px-4 py-5 sm:px-6">
-            <p className="text-sm text-gray-600 mb-4">
-              Launch a simulated attack against this instance
-            </p>
-            <div className="flex flex-wrap gap-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Attack Simulation</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <Description>Launch a simulated attack against this instance</Description>
+            <AttackButtonGroup>
               {[
-                { id: 'script_kiddie_generic', label: 'Script Kiddie', color: 'bg-gray-500' },
-                { id: 'apt_generic', label: 'Generic APT', color: 'bg-orange-500' },
-                { id: 'apt29', label: 'APT29 (Cozy Bear)', color: 'bg-red-600' },
-                { id: 'lazarus', label: 'Lazarus Group', color: 'bg-red-700' },
+                { id: 'script_kiddie_generic', label: 'Script Kiddie', color: '#6b7280' },
+                { id: 'apt_generic', label: 'Generic APT', color: '#f97316' },
+                { id: 'apt29', label: 'APT29 (Cozy Bear)', color: '#dc2626' },
+                { id: 'lazarus', label: 'Lazarus Group', color: '#b91c1c' },
               ].map((actor) => (
-                <button
+                <AttackButton
                   key={actor.id}
+                  $color={actor.color}
                   onClick={() => launchAttackMutation.mutate(actor.id)}
                   disabled={instance.status !== 'running' || launchAttackMutation.isPending}
-                  className={`inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-white ${actor.color} hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <ShieldExclamationIcon className="h-3 w-3 mr-1" />
+                  <ShieldExclamationIcon />
                   {actor.label}
-                </button>
+                </AttackButton>
               ))}
-            </div>
-            <Link
-              to="/attacks/scenarios"
-              className="inline-block mt-3 text-sm text-splunk-green hover:underline"
-            >
+            </AttackButtonGroup>
+            <CardLink to={toPath('attacks/scenarios')}>
               View all attack scenarios →
-            </Link>
-          </div>
-        </div>
-      </div>
+            </CardLink>
+          </CardBody>
+        </Card>
+      </TwoColumnGrid>
 
       {/* Logs Toggle */}
       <div>
-        <button
-          onClick={() => setShowLogs(!showLogs)}
-          className="text-sm text-splunk-green hover:underline"
-        >
+        <ToggleButton onClick={() => setShowLogs(!showLogs)}>
           {showLogs ? 'Hide Logs' : 'Show Container Logs'}
-        </button>
+        </ToggleButton>
       </div>
 
       {showLogs && id && <LogViewer instanceId={id} />}
-    </div>
+    </PageContainer>
   );
 }

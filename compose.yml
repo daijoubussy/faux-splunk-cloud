@@ -1,0 +1,650 @@
+name: fsc
+
+services:
+  # Step-CA - Internal Certificate Authority
+  step-ca:
+    image: smallstep/step-ca:latest
+    user: "1000:1000"
+    volumes:
+      - step-ca-data:/home/step
+    environment:
+      - DOCKER_STEPCA_INIT_NAME=${FSC_CA_NAME:-Faux Splunk Cloud CA}
+      - DOCKER_STEPCA_INIT_DNS_NAMES=step-ca,localhost,traefik,${FSC_PORTAL_HOST:-portal.fsc.orb.local}
+      - DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT=true
+      - DOCKER_STEPCA_INIT_ACME=true
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD", "step", "ca", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Traefik - Reverse Proxy with TLS
+  # Named "portal" so Orbstack creates portal.fsc.orb.local
+  portal:
+    image: traefik:latest
+    # Note: Running as root for Docker socket access. For production, use a socket proxy.
+    restart: unless-stopped
+    depends_on:
+      step-ca:
+        condition: service_healthy
+    ports:
+      - "${FSC_HTTP_PORT:-80}:80"
+      - "${FSC_HTTPS_PORT:-443}:443"
+      - "${FSC_TRAEFIK_DASHBOARD_PORT:-8080}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-acme:/acme
+      - step-ca-data:/step-ca:ro
+    environment:
+      - LEGO_CA_CERTIFICATES=/step-ca/certs/root_ca.crt
+    networks:
+      - fsc-network
+      - fsc-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${FSC_HOSTNAME:-localhost}`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls=true"
+
+  # Docker-in-Docker - Isolated container orchestration
+  # Optimized for ARM64 emulation (running x86 Splunk images)
+  dind:
+    image: docker:24-dind
+    platform: linux/arm64  # DinD itself runs native, only child containers are emulated
+    privileged: true  # Required for DinD (use Sysbox for rootless)
+    restart: unless-stopped
+    environment:
+      - DOCKER_TLS_CERTDIR=
+      # Default to x86 platform for Splunk images
+      - DOCKER_DEFAULT_PLATFORM=linux/amd64
+      # Optimize storage driver for DinD
+      - DOCKER_DRIVER=overlay2
+    volumes:
+      - dind-data:/var/lib/docker
+    networks:
+      - fsc-internal
+    # Extended health check for slower emulation startup
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    # Resource limits to prevent runaway emulation
+    mem_limit: ${FSC_DIND_MEMORY_LIMIT:-16g}
+    cpus: ${FSC_DIND_CPU_LIMIT:-4}
+
+  # Backend API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      dind:
+        condition: service_healthy
+      step-ca:
+        condition: service_healthy
+      terraform-init:
+        condition: service_completed_successfully
+    environment:
+      - FSC_HOST=0.0.0.0
+      - FSC_PORT=${FSC_API_PORT:-8800}
+      - FSC_DEBUG=${FSC_DEBUG:-false}
+      - FSC_DATA_DIR=/data
+      - FSC_DATABASE_URL=${FSC_DATABASE_URL:-sqlite+aiosqlite:///data/fsc.db}
+      - FSC_DEFAULT_ADMIN_PASSWORD=${FSC_DEFAULT_ADMIN_PASSWORD:-FauxSplunk123!}
+      - FSC_JWT_SECRET_KEY=${FSC_JWT_SECRET_KEY:-change-me-in-production}
+      - FSC_SPLUNK_IMAGE=${FSC_SPLUNK_IMAGE:-splunk/splunk:9.3.2}
+      - FSC_DEFAULT_TTL_HOURS=${FSC_DEFAULT_TTL_HOURS:-24}
+      - FSC_MAX_TTL_HOURS=${FSC_MAX_TTL_HOURS:-168}
+      - FSC_MAX_MEMORY_MB=${FSC_MAX_MEMORY_MB:-4096}
+      - FSC_MAX_CPU_COUNT=${FSC_MAX_CPU_COUNT:-2.0}
+      # Docker-in-Docker connection
+      - FSC_DOCKER_HOST=${FSC_DOCKER_HOST:-tcp://dind:2375}
+      - DOCKER_HOST=${FSC_DOCKER_HOST:-tcp://dind:2375}
+      # Keycloak SAML configuration (internal calls use HTTPS via portal/Traefik)
+      - FSC_KEYCLOAK_URL=https://${FSC_PORTAL_HOST:-portal.fsc.orb.local}/realms/${FSC_KEYCLOAK_REALM:-faux-splunk}
+      - FSC_KEYCLOAK_INTERNAL_URL=https://portal/realms/${FSC_KEYCLOAK_REALM:-faux-splunk}
+      - FSC_KEYCLOAK_REALM=${FSC_KEYCLOAK_REALM:-faux-splunk}
+      - FSC_SAML_ENTITY_ID=${FSC_SAML_ENTITY_ID:-faux-splunk-cloud}
+      - FSC_SAML_ACS_URL=https://${FSC_PORTAL_HOST:-portal.fsc.orb.local}/api/v1/auth/saml/acs
+      - FSC_SAML_SLO_URL=https://${FSC_PORTAL_HOST:-portal.fsc.orb.local}/api/v1/auth/saml/slo
+      - FSC_SAML_SESSION_DURATION_HOURS=${FSC_SAML_SESSION_DURATION_HOURS:-8}
+      # Multi-tenancy
+      - FSC_DEFAULT_TENANT_MAX_INSTANCES=${FSC_DEFAULT_TENANT_MAX_INSTANCES:-5}
+      - FSC_DEFAULT_TENANT_MAX_MEMORY_MB=${FSC_DEFAULT_TENANT_MAX_MEMORY_MB:-8192}
+      # SIEM Backend
+      - FSC_SIEM_HOST=${FSC_SIEM_HOST:-splunk-siem}
+      - FSC_SIEM_PORT=${FSC_SIEM_PORT:-8089}
+      - FSC_SIEM_PASSWORD=${FSC_SPLUNK_SIEM_PASSWORD:-FauxSIEM123!}
+      # Vault integration (AppRole credentials from Terraform)
+      - FSC_VAULT_ADDR=http://vault:8200
+      - FSC_VAULT_CREDENTIALS_FILE=/terraform/output/fsc-api.env
+    volumes:
+      - fsc-data:/data
+      - terraform-output:/terraform/output:ro
+    networks:
+      - fsc-network
+      - fsc-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${FSC_API_PORT:-8800}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # API routes - matches portal host and API paths
+      - "traefik.http.routers.api.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && (PathPrefix(`/api`) || PathPrefix(`/health`) || PathPrefix(`/docs`) || PathPrefix(`/redoc`) || PathPrefix(`/openapi.json`) || PathRegexp(`^/[a-zA-Z0-9-]+/adminconfig`))"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls=true"
+      - "traefik.http.routers.api.priority=10"
+      - "traefik.http.services.api.loadbalancer.server.port=${FSC_API_PORT:-8800}"
+
+  # Frontend UI
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - fsc-network
+    labels:
+      - "traefik.enable=true"
+      # UI routes - catch-all for portal host
+      - "traefik.http.routers.ui.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`)"
+      - "traefik.http.routers.ui.entrypoints=websecure"
+      - "traefik.http.routers.ui.tls=true"
+      - "traefik.http.routers.ui.priority=1"
+      - "traefik.http.services.ui.loadbalancer.server.port=80"
+
+  # Splunk SIEM Backend (for admin portal)
+  splunk-siem:
+    image: ${FSC_SPLUNK_IMAGE:-splunk/splunk:9.3.2}
+    platform: linux/amd64  # Splunk doesn't have ARM64 images
+    restart: unless-stopped
+    environment:
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=${FSC_SPLUNK_SIEM_PASSWORD:-FauxSIEM123!}
+    volumes:
+      - siem-data:/opt/splunk/var
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:8089/services/server/health/splunkd/details"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # Keycloak - Open Source Identity Provider
+  # Provides OIDC authentication for the platform
+  keycloak-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=keycloak
+      - POSTGRES_PASSWORD=${FSC_KEYCLOAK_DB_PASSWORD:-keycloak}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    restart: unless-stopped
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    command:
+      - start-dev
+      - --proxy-headers=xforwarded
+      - --health-enabled=true
+      - --spi-theme-static-max-age=-1
+      - --spi-theme-cache-themes=false
+    environment:
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://keycloak-db:5432/keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=${FSC_KEYCLOAK_DB_PASSWORD:-keycloak}
+      # Admin user for start-dev mode (deprecated KEYCLOAK_ADMIN still works)
+      - KEYCLOAK_ADMIN=${FSC_KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${FSC_KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KC_HEALTH_ENABLED=true
+      - KC_METRICS_ENABLED=true
+      - KC_FEATURES=token-exchange,admin-fine-grained-authz
+      # Production mode - Traefik handles TLS termination
+      - KC_HOSTNAME=${FSC_PORTAL_HOST:-portal.fsc.orb.local}
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+    volumes:
+      - ./keycloak/themes/faux-splunk:/opt/keycloak/themes/faux-splunk:ro
+    networks:
+      - fsc-network
+      - fsc-internal
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      # Keycloak routes - matches portal host and auth/realm paths
+      - "traefik.http.routers.keycloak.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && (PathPrefix(`/auth`) || PathPrefix(`/realms`) || PathPrefix(`/resources`) || PathPrefix(`/js`))"
+      - "traefik.http.routers.keycloak.entrypoints=websecure"
+      - "traefik.http.routers.keycloak.tls=true"
+      - "traefik.http.routers.keycloak.priority=8"
+      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+      # Internal routing for API-to-Keycloak calls (Host: portal)
+      - "traefik.http.routers.keycloak-internal.rule=Host(`portal`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`) || PathPrefix(`/admin`))"
+      - "traefik.http.routers.keycloak-internal.entrypoints=websecure"
+      - "traefik.http.routers.keycloak-internal.tls=true"
+      - "traefik.http.routers.keycloak-internal.priority=7"
+      # Strip /auth prefix for Keycloak 21+ which dropped it
+      - "traefik.http.middlewares.keycloak-stripprefix.stripprefix.prefixes=/auth"
+      - "traefik.http.routers.keycloak-admin.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && PathPrefix(`/auth`)"
+      - "traefik.http.routers.keycloak-admin.middlewares=keycloak-stripprefix"
+
+  # Keycloak Realm Initialization (Legacy - kept for backward compatibility)
+  # NOTE: Prefer using terraform-init which handles both Keycloak and Vault
+  # This script is still useful for quick testing without full Terraform setup
+  keycloak-init:
+    image: alpine:3.19
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache curl jq bash && /bin/bash /init/init-realm.sh"]
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_ADMIN=${FSC_KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${FSC_KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - FSC_KEYCLOAK_REALM=${FSC_KEYCLOAK_REALM:-faux-splunk}
+      - FSC_HOSTNAME=${FSC_PORTAL_HOST:-portal.fsc.orb.local}
+      - FSC_DEFAULT_ADMIN_EMAIL=${FSC_DEFAULT_ADMIN_EMAIL:-admin@faux-splunk.local}
+      - FSC_DEFAULT_ADMIN_PASSWORD=${FSC_DEFAULT_ADMIN_PASSWORD:-admin}
+      - FSC_VAULT_OIDC_SECRET=${FSC_VAULT_OIDC_SECRET:-vault-oidc-secret}
+      - FSC_CONCOURSE_OIDC_SECRET=${FSC_CONCOURSE_OIDC_SECRET:-concourse-oidc-secret}
+    volumes:
+      - ./keycloak/init-realm.sh:/init/init-realm.sh:ro
+    networks:
+      - fsc-network
+      - fsc-internal
+    restart: "no"
+    profiles:
+      - legacy  # Only runs with: docker compose --profile legacy up
+
+  # ==========================================================================
+  # HashiCorp Vault - Secrets Management
+  # ==========================================================================
+
+  # Vault PostgreSQL Backend (only needed if using postgres storage)
+  # Enable with: docker compose --profile vault-postgres up
+  vault-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles:
+      - vault-postgres  # Only starts when this profile is enabled
+    environment:
+      - POSTGRES_DB=vault
+      - POSTGRES_USER=vault
+      - POSTGRES_PASSWORD=${FSC_VAULT_DB_PASSWORD:-vault}
+    volumes:
+      - vault-db-data:/var/lib/postgresql/data
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # HashiCorp Vault Server
+  vault:
+    image: hashicorp/vault:1.15
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_ADDR=http://127.0.0.1:8200
+      - VAULT_API_ADDR=http://vault:8200
+      - SKIP_SETCAP=1
+    volumes:
+      # Note: Mount to /etc/vault.hcl, NOT /vault/config/ (causes port binding race condition)
+      - ./vault/config.hcl:/etc/vault.hcl:ro
+      - vault-data:/vault/data
+    # Override entrypoint to chown data dir before standard entrypoint runs
+    entrypoint: ["/bin/sh", "-c", "chown -R vault:vault /vault/data && exec docker-entrypoint.sh server -config=/etc/vault.hcl"]
+    networks:
+      - fsc-network
+      - fsc-internal
+    healthcheck:
+      # vault status returns 0=unsealed, 1=error, 2=sealed - we accept 0 or 2
+      test: ["CMD-SHELL", "vault status || [ $? -eq 2 ]"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vault.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && PathPrefix(`/vault`)"
+      - "traefik.http.routers.vault.entrypoints=websecure"
+      - "traefik.http.routers.vault.tls=true"
+      - "traefik.http.routers.vault.priority=9"
+      - "traefik.http.services.vault.loadbalancer.server.port=8200"
+      - "traefik.http.middlewares.vault-strip.stripprefix.prefixes=/vault"
+      - "traefik.http.routers.vault.middlewares=vault-strip"
+
+  # Vault Initialization (runs once to unseal and get root token)
+  vault-init:
+    image: alpine:3.19
+    depends_on:
+      vault:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/init/init-vault.sh"]
+    environment:
+      - VAULT_ADDR=http://vault:8200
+    volumes:
+      - ./vault/init-vault.sh:/init/init-vault.sh:ro
+      - vault-init-data:/vault/init
+    networks:
+      - fsc-internal
+    restart: "no"
+
+  # Terraform Infrastructure Init (configures Keycloak and Vault)
+  terraform-init:
+    image: hashicorp/terraform:1.6
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/terraform/init-terraform.sh"]
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_ADMIN=${FSC_KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${FSC_KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - VAULT_ADDR=http://vault:8200
+      - FSC_PORTAL_HOST=${FSC_PORTAL_HOST:-portal.fsc.orb.local}
+      - FSC_KEYCLOAK_REALM=${FSC_KEYCLOAK_REALM:-faux-splunk}
+      - FSC_DEFAULT_ADMIN_EMAIL=${FSC_DEFAULT_ADMIN_EMAIL:-admin@faux-splunk.local}
+      - FSC_DEFAULT_ADMIN_PASSWORD=${FSC_DEFAULT_ADMIN_PASSWORD:-admin}
+      - FSC_VAULT_OIDC_SECRET=${FSC_VAULT_OIDC_SECRET:-vault-oidc-secret}
+      - FSC_CONCOURSE_OIDC_SECRET=${FSC_CONCOURSE_OIDC_SECRET:-concourse-oidc-secret}
+    volumes:
+      - ./terraform:/terraform:rw
+      - vault-init-data:/vault/init:ro
+      - terraform-output:/terraform/output
+    networks:
+      - fsc-network    # Needs external access to download providers
+      - fsc-internal   # Needs access to Vault and Keycloak
+    restart: "no"
+
+  # ==========================================================================
+  # Concourse CI - CI/CD Platform
+  # ==========================================================================
+
+  # Concourse PostgreSQL
+  concourse-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=concourse
+      - POSTGRES_USER=concourse
+      - POSTGRES_PASSWORD=${FSC_CONCOURSE_DB_PASSWORD:-concourse}
+    volumes:
+      - concourse-db-data:/var/lib/postgresql/data
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U concourse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Concourse Web (ATC + TSA)
+  concourse-web:
+    image: concourse/concourse:7.11
+    platform: linux/amd64  # Concourse doesn't have ARM64 images
+    restart: unless-stopped
+    depends_on:
+      concourse-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+      terraform-init:
+        condition: service_completed_successfully
+    command: web
+    environment:
+      # PostgreSQL
+      - CONCOURSE_POSTGRES_HOST=concourse-db
+      - CONCOURSE_POSTGRES_USER=concourse
+      - CONCOURSE_POSTGRES_PASSWORD=${FSC_CONCOURSE_DB_PASSWORD:-concourse}
+      - CONCOURSE_POSTGRES_DATABASE=concourse
+      # External URL (behind Traefik)
+      - CONCOURSE_EXTERNAL_URL=https://${FSC_PORTAL_HOST:-portal.fsc.orb.local}/concourse
+      # Local admin user (fallback)
+      - CONCOURSE_ADD_LOCAL_USER=admin:${FSC_CONCOURSE_ADMIN_PASSWORD:-admin}
+      - CONCOURSE_MAIN_TEAM_LOCAL_USER=admin
+      # OIDC via Keycloak
+      - CONCOURSE_OIDC_DISPLAY_NAME=Keycloak SSO
+      - CONCOURSE_OIDC_ISSUER=https://${FSC_PORTAL_HOST:-portal.fsc.orb.local}/realms/${FSC_KEYCLOAK_REALM:-faux-splunk}
+      - CONCOURSE_OIDC_CLIENT_ID=concourse
+      - CONCOURSE_OIDC_CLIENT_SECRET=${FSC_CONCOURSE_OIDC_SECRET:-concourse-oidc-secret}
+      - CONCOURSE_MAIN_TEAM_OIDC_GROUP=platform_admin
+      # Vault integration (reads AppRole from Terraform output)
+      - CONCOURSE_VAULT_URL=http://vault:8200
+      - CONCOURSE_VAULT_AUTH_BACKEND=approle
+      - CONCOURSE_VAULT_PATH_PREFIX=/fsc
+      # SSH Keys
+      - CONCOURSE_SESSION_SIGNING_KEY=/keys/session_signing_key
+      - CONCOURSE_TSA_HOST_KEY=/keys/tsa_host_key
+      - CONCOURSE_TSA_AUTHORIZED_KEYS=/keys/authorized_worker_keys
+    volumes:
+      - ./concourse/keys:/keys:ro
+      - terraform-output:/terraform/output:ro
+    networks:
+      - fsc-network
+      - fsc-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.concourse.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && PathPrefix(`/concourse`)"
+      - "traefik.http.routers.concourse.entrypoints=websecure"
+      - "traefik.http.routers.concourse.tls=true"
+      - "traefik.http.routers.concourse.priority=9"
+      - "traefik.http.services.concourse.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.concourse-strip.stripprefix.prefixes=/concourse"
+      - "traefik.http.routers.concourse.middlewares=concourse-strip"
+
+  # Concourse Worker (uses shared DinD)
+  concourse-worker:
+    image: concourse/concourse:7.11
+    platform: linux/amd64  # Concourse doesn't have ARM64 images
+    restart: unless-stopped
+    privileged: true
+    depends_on:
+      concourse-web:
+        condition: service_healthy
+      dind:
+        condition: service_healthy
+    command: worker
+    environment:
+      - CONCOURSE_TSA_HOST=concourse-web:2222
+      - CONCOURSE_TSA_PUBLIC_KEY=/keys/tsa_host_key.pub
+      - CONCOURSE_TSA_WORKER_PRIVATE_KEY=/keys/worker_key
+      - CONCOURSE_GARDEN_DNS_SERVER=8.8.8.8
+      - CONCOURSE_BAGGAGECLAIM_DRIVER=overlay
+      # Use shared DinD for container tasks
+      - DOCKER_HOST=tcp://dind:2375
+    volumes:
+      - ./concourse/keys:/keys:ro
+    networks:
+      - fsc-internal
+
+  # ==========================================================================
+  # HashiCorp Boundary - Identity-Aware Proxy for Short-Lived Access
+  # Provides just-in-time, time-limited access to ephemeral Splunk instances
+  # ==========================================================================
+  boundary-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=boundary
+      - POSTGRES_USER=boundary
+      - POSTGRES_PASSWORD=${FSC_BOUNDARY_DB_PASSWORD:-boundary}
+    volumes:
+      - boundary-db-data:/var/lib/postgresql/data
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U boundary"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  boundary:
+    image: hashicorp/boundary:latest
+    restart: unless-stopped
+    depends_on:
+      boundary-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    command:
+      - server
+      - -config=/boundary/config.hcl
+    environment:
+      - BOUNDARY_PG_URL=postgresql://boundary:${FSC_BOUNDARY_DB_PASSWORD:-boundary}@boundary-db:5432/boundary?sslmode=disable
+      # KMS Keys (passed to config via envsubst or template)
+      - FSC_BOUNDARY_ROOT_KEY=${FSC_BOUNDARY_ROOT_KEY:-8fVBkCvMp5QFKjhXA5hC/YvABfKNQ/xHF2rGm7WpYqk=}
+      - FSC_BOUNDARY_WORKER_AUTH_KEY=${FSC_BOUNDARY_WORKER_AUTH_KEY:-Kl62uD4fQKV5e/i6Dsi/mBTkxaOsuzq8M5OKo5rdTuI=}
+      - FSC_BOUNDARY_RECOVERY_KEY=${FSC_BOUNDARY_RECOVERY_KEY:-9dVBkCvMp5QFKjhXA5hC/YvABfKNQ/xHF2rGm7WpYqk=}
+    volumes:
+      - ./boundary/config.hcl:/boundary/config.hcl:ro
+      - boundary-data:/boundary/data
+    networks:
+      - fsc-network
+      - fsc-internal
+    healthcheck:
+      test: ["CMD", "boundary", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      # Boundary UI and API
+      - "traefik.http.routers.boundary.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && (PathPrefix(`/boundary`) || PathPrefix(`/v1/`))"
+      - "traefik.http.routers.boundary.entrypoints=websecure"
+      - "traefik.http.routers.boundary.tls=true"
+      - "traefik.http.routers.boundary.priority=6"
+      - "traefik.http.services.boundary.loadbalancer.server.port=9200"
+      # Boundary Connect (WebSocket proxy for sessions)
+      - "traefik.http.routers.boundary-connect.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && PathPrefix(`/connect`)"
+      - "traefik.http.routers.boundary-connect.entrypoints=websecure"
+      - "traefik.http.routers.boundary-connect.tls=true"
+      - "traefik.http.services.boundary-connect.loadbalancer.server.port=9203"
+
+  # Apache Guacamole - Remote Desktop Gateway
+  # Provides VNC/RDP/SSH access to Splunk instances embedded in the UI
+  guacd:
+    image: guacamole/guacd:latest
+    platform: linux/amd64  # Guacamole may not have ARM64 images
+    restart: unless-stopped
+    networks:
+      - fsc-internal
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4822"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  guacamole:
+    image: guacamole/guacamole:latest
+    platform: linux/amd64  # Guacamole may not have ARM64 images
+    restart: unless-stopped
+    depends_on:
+      guacd:
+        condition: service_healthy
+    environment:
+      - GUACD_HOSTNAME=guacd
+      - GUACD_PORT=4822
+      # Use simple authentication (no database required)
+      - EXTENSION_PRIORITY=*,header
+      # Enable TOTP for admins (optional)
+      - TOTP_ENABLED=false
+      # Guacamole admin password
+      - GUACAMOLE_ADMIN_PASSWORD=${FSC_GUACAMOLE_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./guacamole/user-mapping.xml:/etc/guacamole/user-mapping.xml:ro
+    networks:
+      - fsc-network
+      - fsc-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.guacamole.rule=Host(`${FSC_PORTAL_HOST:-portal.fsc.orb.local}`) && PathPrefix(`/guacamole`)"
+      - "traefik.http.routers.guacamole.entrypoints=websecure"
+      - "traefik.http.routers.guacamole.tls=true"
+      - "traefik.http.routers.guacamole.priority=5"
+      - "traefik.http.services.guacamole.loadbalancer.server.port=8080"
+
+volumes:
+  fsc-data:
+    driver: local
+  step-ca-data:
+    driver: local
+  traefik-acme:
+    driver: local
+  dind-data:
+    driver: local
+  siem-data:
+    driver: local
+  keycloak-db-data:
+    driver: local
+  vault-db-data:
+    driver: local
+  vault-data:
+    driver: local
+  vault-init-data:
+    driver: local
+  terraform-output:
+    driver: local
+  concourse-db-data:
+    driver: local
+  boundary-db-data:
+    driver: local
+  boundary-data:
+    driver: local
+
+networks:
+  fsc-network:
+    driver: bridge
+    name: fsc-network
+  fsc-internal:
+    driver: bridge
+    name: fsc-internal
+    internal: true

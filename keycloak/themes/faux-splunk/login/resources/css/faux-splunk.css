@@ -1,0 +1,519 @@
+/*
+ * Faux Splunk Cloud - Keycloak Login Theme
+ * Based on Splunk Prisma Design System
+ */
+
+/* CSS Variables - Splunk Prisma Colors */
+:root {
+  /* Primary brand */
+  --splunk-green: #65A637;
+  --splunk-green-hover: #5A9431;
+  --splunk-green-light: #7AB84A;
+
+  /* Dark mode surfaces */
+  --bg-page: #0D0D0D;
+  --bg-container: #171717;
+  --bg-card: #1F1F1F;
+  --bg-elevated: #292929;
+  --bg-hover: #3C3C3C;
+
+  /* Borders */
+  --border-color: #3C3C3C;
+  --border-focus: #65A637;
+
+  /* Text colors */
+  --text-default: #E8E8E8;
+  --text-muted: #8C8C8C;
+  --text-placeholder: #5C5C5C;
+
+  /* Semantic colors */
+  --color-error: #DC4E41;
+  --color-error-bg: rgba(220, 78, 65, 0.15);
+  --color-success: #65A637;
+  --color-warning: #F8BE34;
+  --color-info: #5CC4E7;
+
+  /* Shadows */
+  --shadow-card: 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+}
+
+/* ============================================================================
+   Base Styles
+   ============================================================================ */
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-page) !important;
+  font-family: 'Splunk Platform Sans', 'Proxima Nova', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text-default);
+}
+
+/* ============================================================================
+   Login Container
+   ============================================================================ */
+
+.login-pf {
+  background-color: var(--bg-page) !important;
+  background-image: none !important;
+}
+
+.login-pf body {
+  background-color: var(--bg-page) !important;
+}
+
+#kc-header {
+  display: none;
+}
+
+#kc-header-wrapper {
+  display: none;
+}
+
+/* Main login box */
+.card-pf {
+  background-color: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--shadow-elevated) !important;
+  margin: 0 auto;
+  max-width: 420px;
+  padding: 2rem !important;
+}
+
+#kc-content {
+  margin-top: 0;
+}
+
+#kc-content-wrapper {
+  margin-top: 0;
+}
+
+/* ============================================================================
+   Logo / Brand
+   ============================================================================ */
+
+#kc-logo-wrapper {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+#kc-logo-wrapper a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+}
+
+/* Custom logo */
+.kc-logo-text {
+  background-image: none !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.kc-logo-text::before {
+  content: 'S';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background-color: var(--splunk-green);
+  color: white;
+  font-size: 24px;
+  font-weight: bold;
+  border-radius: 8px;
+}
+
+.kc-logo-text::after {
+  content: 'Faux Splunk Cloud';
+  color: var(--text-default);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+/* ============================================================================
+   Form Header
+   ============================================================================ */
+
+#kc-form-login .form-group:first-child {
+  margin-top: 0;
+}
+
+#kc-page-title {
+  color: var(--text-default) !important;
+  font-size: 1.5rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+#kc-locale {
+  display: none;
+}
+
+/* ============================================================================
+   Form Elements
+   ============================================================================ */
+
+.form-group {
+  margin-bottom: 1.25rem;
+}
+
+label {
+  color: var(--text-muted) !important;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+/* Text inputs */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+.pf-c-form-control {
+  width: 100%;
+  padding: 0.75rem 1rem !important;
+  background-color: var(--bg-container) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 4px !important;
+  color: var(--text-default) !important;
+  font-size: 0.875rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-sizing: border-box;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+.pf-c-form-control:focus {
+  outline: none !important;
+  border-color: var(--splunk-green) !important;
+  box-shadow: 0 0 0 2px rgba(101, 166, 55, 0.25) !important;
+}
+
+input[type="text"]::placeholder,
+input[type="password"]::placeholder,
+input[type="email"]::placeholder {
+  color: var(--text-placeholder);
+}
+
+/* ============================================================================
+   Buttons
+   ============================================================================ */
+
+.btn,
+.pf-c-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem !important;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 4px !important;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+  text-decoration: none;
+  border: none;
+}
+
+/* Primary button */
+.btn-primary,
+.pf-c-button.pf-m-primary,
+#kc-login {
+  background-color: var(--splunk-green) !important;
+  color: white !important;
+  border: none !important;
+  width: 100%;
+}
+
+.btn-primary:hover,
+.pf-c-button.pf-m-primary:hover,
+#kc-login:hover {
+  background-color: var(--splunk-green-hover) !important;
+}
+
+.btn-primary:focus,
+.pf-c-button.pf-m-primary:focus,
+#kc-login:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(101, 166, 55, 0.4) !important;
+}
+
+/* Secondary/default button */
+.btn-default,
+.pf-c-button.pf-m-secondary {
+  background-color: transparent !important;
+  color: var(--text-default) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+.btn-default:hover,
+.pf-c-button.pf-m-secondary:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+/* Link button */
+.btn-link {
+  background: none !important;
+  border: none !important;
+  color: var(--splunk-green) !important;
+  padding: 0 !important;
+  font-weight: 500;
+}
+
+.btn-link:hover {
+  color: var(--splunk-green-light) !important;
+  text-decoration: underline;
+}
+
+/* ============================================================================
+   Checkbox / Remember Me
+   ============================================================================ */
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  margin-bottom: 0;
+}
+
+.checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--splunk-green);
+  cursor: pointer;
+}
+
+/* ============================================================================
+   Links
+   ============================================================================ */
+
+a {
+  color: var(--splunk-green);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--splunk-green-light);
+  text-decoration: underline;
+}
+
+#kc-registration,
+#kc-form-options {
+  text-align: center;
+  margin-top: 1.5rem;
+}
+
+#kc-registration span,
+#kc-form-options span {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+/* Forgot password link */
+.kc-form-options-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+/* ============================================================================
+   Alerts / Messages
+   ============================================================================ */
+
+.alert {
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.alert-error,
+.alert-danger,
+.pf-c-alert.pf-m-danger {
+  background-color: var(--color-error-bg) !important;
+  border: 1px solid var(--color-error) !important;
+  color: var(--color-error) !important;
+}
+
+.alert-success,
+.pf-c-alert.pf-m-success {
+  background-color: rgba(101, 166, 55, 0.15) !important;
+  border: 1px solid var(--color-success) !important;
+  color: var(--color-success) !important;
+}
+
+.alert-warning,
+.pf-c-alert.pf-m-warning {
+  background-color: rgba(248, 190, 52, 0.15) !important;
+  border: 1px solid var(--color-warning) !important;
+  color: var(--color-warning) !important;
+}
+
+.alert-info,
+.pf-c-alert.pf-m-info {
+  background-color: rgba(92, 196, 231, 0.15) !important;
+  border: 1px solid var(--color-info) !important;
+  color: var(--color-info) !important;
+}
+
+.kc-feedback-text {
+  color: inherit;
+}
+
+/* ============================================================================
+   Social Login Buttons
+   ============================================================================ */
+
+#kc-social-providers {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+#kc-social-providers h4,
+#kc-social-providers .pf-c-title {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.kc-social-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.kc-social-provider-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  background-color: var(--bg-container);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-default);
+  text-decoration: none;
+  transition: background-color var(--transition-fast);
+}
+
+.kc-social-provider-link:hover {
+  background-color: var(--bg-hover);
+  text-decoration: none;
+}
+
+/* ============================================================================
+   Footer
+   ============================================================================ */
+
+#kc-info-wrapper {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+#kc-info-message {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+/* ============================================================================
+   Responsive
+   ============================================================================ */
+
+@media (max-width: 480px) {
+  .card-pf {
+    margin: 1rem;
+    padding: 1.5rem !important;
+  }
+
+  .kc-logo-text::after {
+    font-size: 1.25rem;
+  }
+}
+
+/* ============================================================================
+   Specific Pages
+   ============================================================================ */
+
+/* Registration page */
+#kc-register-form .form-group {
+  margin-bottom: 1rem;
+}
+
+/* Reset password page */
+#kc-reset-password-form .form-group {
+  margin-bottom: 1.25rem;
+}
+
+/* OTP / 2FA page */
+#kc-otp-login-form .form-group {
+  margin-bottom: 1.25rem;
+}
+
+/* ============================================================================
+   PatternFly Overrides
+   ============================================================================ */
+
+.pf-c-login {
+  background-color: var(--bg-page) !important;
+}
+
+.pf-c-login__main {
+  background-color: var(--bg-card) !important;
+  border-radius: 8px;
+  box-shadow: var(--shadow-elevated);
+}
+
+.pf-c-login__main-header {
+  padding: 2rem 2rem 0;
+}
+
+.pf-c-login__main-body {
+  padding: 1.5rem 2rem;
+}
+
+.pf-c-login__main-footer {
+  padding: 0 2rem 2rem;
+}
+
+.pf-c-login__main-footer-links {
+  justify-content: center;
+}
+
+.pf-c-title {
+  color: var(--text-default) !important;
+}
+
+.pf-c-form__label-text {
+  color: var(--text-muted) !important;
+}
+
+/* Hide unnecessary elements */
+.pf-c-login__footer,
+.pf-c-login__header {
+  display: none;
+}

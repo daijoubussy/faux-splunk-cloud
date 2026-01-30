@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     )
 
     # Docker configuration
+    docker_host: str = Field(
+        default="unix:///var/run/docker.sock",
+        description="Docker daemon host (use tcp://dind:2375 for DinD)",
+    )
     docker_network_prefix: str = Field(
         default="fsc", description="Prefix for Docker networks"
     )
@@ -144,6 +148,80 @@ class Settings(BaseSettings):
     experience: Literal["victoria", "classic"] = Field(
         default="victoria",
         description="Splunk Cloud Experience mode (victoria recommended)",
+    )
+
+    # Keycloak SAML configuration (open source IdP)
+    keycloak_url: str | None = Field(
+        default=None,
+        description="Keycloak external URL for browser redirects (e.g., 'https://localhost/realms/faux-splunk')",
+    )
+    keycloak_internal_url: str | None = Field(
+        default=None,
+        description="Keycloak internal URL for server-to-server calls (e.g., 'http://keycloak:8080/realms/faux-splunk')",
+    )
+    keycloak_realm: str = Field(
+        default="faux-splunk",
+        description="Keycloak realm name",
+    )
+    saml_entity_id: str = Field(
+        default="faux-splunk-cloud",
+        description="SAML Service Provider Entity ID",
+    )
+    saml_acs_url: str = Field(
+        default="https://localhost/api/v1/auth/saml/acs",
+        description="SAML Assertion Consumer Service URL",
+    )
+    saml_slo_url: str = Field(
+        default="https://localhost/api/v1/auth/saml/slo",
+        description="SAML Single Logout URL",
+    )
+    saml_metadata_url: str | None = Field(
+        default=None,
+        description="SAML IdP metadata URL (auto-discovered from Keycloak if not set)",
+    )
+    saml_cert_file: Path | None = Field(
+        default=None,
+        description="Path to SP certificate file for signing",
+    )
+    saml_key_file: Path | None = Field(
+        default=None,
+        description="Path to SP private key file",
+    )
+    saml_session_duration_hours: int = Field(
+        default=8,
+        description="SAML session duration in hours",
+    )
+
+    # Multi-tenancy settings
+    default_tenant_max_instances: int = Field(
+        default=5,
+        description="Default max instances per tenant",
+    )
+    default_tenant_max_memory_mb: int = Field(
+        default=8192,
+        description="Default max memory (MB) per tenant",
+    )
+
+    # SIEM Splunk backend settings (for admin portal)
+    siem_host: str = Field(
+        default="splunk-siem",
+        description="Splunk SIEM backend host",
+    )
+    siem_port: int = Field(
+        default=8089,
+        description="Splunk SIEM management port",
+    )
+    siem_username: str = Field(
+        default="admin",
+        description="Splunk SIEM admin username",
+    )
+    siem_password: SecretStr = Field(
+        default=SecretStr("FauxSIEM123!"),
+        description="Splunk SIEM admin password",
+    )
+    siem_verify_ssl: bool = Field(
+        default=False,
+        description="Verify SSL for SIEM Splunk connection",
     )
 
     def get_database_url(self) -> str:

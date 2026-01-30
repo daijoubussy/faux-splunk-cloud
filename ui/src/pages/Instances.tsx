@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
+import styled from 'styled-components';
+import { variables, pick } from '@splunk/themes';
 import {
   PlusIcon,
   PlayIcon,
@@ -11,28 +13,404 @@ import {
   ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { instancesApi } from '../api';
+import { useTenantPath } from '../hooks/useTenantPath';
 import type { Instance } from '../types';
 
-function StatusBadge({ status }: { status: Instance['status'] }) {
-  const colors: Record<string, string> = {
-    running: 'bg-green-100 text-green-800',
-    starting: 'bg-yellow-100 text-yellow-800 animate-pulse',
-    stopped: 'bg-gray-100 text-gray-800',
-    error: 'bg-red-100 text-red-800',
-    pending: 'bg-blue-100 text-blue-800',
-    provisioning: 'bg-blue-100 text-blue-800 animate-pulse',
-    stopping: 'bg-yellow-100 text-yellow-800 animate-pulse',
-    terminated: 'bg-gray-100 text-gray-500',
-  };
+// ============================================================================
+// Styled Components
+// ============================================================================
 
+const PageContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+`;
+
+const PageHeaderRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+`;
+
+const PageHeader = styled.div``;
+
+const PageTitle = styled.h1`
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const PageDescription = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 0.5rem;
+`;
+
+const PrimaryButton = styled(Link)`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  background-color: ${variables.accentColorPositive};
+  border: none;
+  border-radius: 0.375rem;
+  text-decoration: none;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: #00a86b;
+  }
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.25rem;
+  }
+`;
+
+const SecondaryButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  background-color: transparent;
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: ${pick({
+      prisma: { dark: variables.backgroundColorHover, light: variables.backgroundColorHover },
+    })};
+  }
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.25rem;
+  }
+`;
+
+const FilterGroup = styled.div`
+  display: flex;
+  gap: 0.5rem;
+`;
+
+interface FilterButtonProps {
+  $active: boolean;
+}
+
+const FilterButton = styled.button<FilterButtonProps>`
+  padding: 0.25rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 9999px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+
+  background-color: ${props => props.$active
+    ? pick({ prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault } })
+    : pick({ prisma: { dark: variables.backgroundColorHover, light: variables.backgroundColorHover } })};
+  color: ${props => props.$active
+    ? pick({ prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage } })
+    : pick({ prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted } })};
+
+  &:hover {
+    background-color: ${props => props.$active
+      ? pick({ prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault } })
+      : pick({ prisma: { dark: variables.borderColor, light: variables.borderColor } })};
+  }
+`;
+
+const FilterCount = styled.span`
+  margin-left: 0.25rem;
+  font-size: 0.75rem;
+`;
+
+const Card = styled.div`
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorSidebar, light: variables.backgroundColorSidebar },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.5rem;
+  overflow: hidden;
+`;
+
+const LoadingMessage = styled.div`
+  padding: 2rem;
+  text-align: center;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const EmptyMessage = styled.div`
+  padding: 2rem;
+  text-align: center;
+`;
+
+const EmptyText = styled.p`
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  margin-bottom: 1rem;
+`;
+
+const Table = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+`;
+
+const TableHead = styled.thead`
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorHover, light: variables.backgroundColorHover },
+  })};
+`;
+
+const TableHeader = styled.th`
+  padding: 0.75rem 1.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+
+  &:last-child {
+    text-align: right;
+  }
+`;
+
+const TableBody = styled.tbody``;
+
+const TableRow = styled.tr`
+  border-bottom: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+
+  &:hover {
+    background-color: ${pick({
+      prisma: { dark: variables.backgroundColorHover, light: variables.backgroundColorHover },
+    })};
+  }
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+const TableCell = styled.td`
+  padding: 1rem 1.5rem;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+
+  &:last-child {
+    text-align: right;
+  }
+`;
+
+const InstanceLink = styled(Link)`
+  display: block;
+  text-decoration: none;
+`;
+
+const InstanceName = styled.div`
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+
+  &:hover {
+    color: ${variables.accentColorPositive};
+  }
+`;
+
+const InstanceId = styled.div`
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+interface BadgeProps {
+  $variant: 'success' | 'warning' | 'error' | 'info' | 'default';
+  $pulse?: boolean;
+}
+
+const Badge = styled.span<BadgeProps>`
+  display: inline-flex;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  ${props => props.$pulse && 'animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;'}
+
+  ${props => {
+    switch (props.$variant) {
+      case 'success':
+        return `
+          background-color: rgba(34, 197, 94, 0.2);
+          color: #22c55e;
+        `;
+      case 'warning':
+        return `
+          background-color: rgba(234, 179, 8, 0.2);
+          color: #eab308;
+        `;
+      case 'error':
+        return `
+          background-color: rgba(239, 68, 68, 0.2);
+          color: #ef4444;
+        `;
+      case 'info':
+        return `
+          background-color: rgba(59, 130, 246, 0.2);
+          color: #3b82f6;
+        `;
+      default:
+        return `
+          background-color: rgba(156, 163, 175, 0.2);
+          color: #9ca3af;
+        `;
+    }
+  }}
+`;
+
+const TopologyBadge = styled.span`
+  display: inline-flex;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 0.25rem;
+  background-color: rgba(168, 85, 247, 0.2);
+  color: #a855f7;
+`;
+
+const ExternalLink = styled.a`
+  color: ${variables.accentColorPositive};
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+const MutedText = styled.span`
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const ExpiredText = styled.div`
+  color: #ef4444;
+`;
+
+const ActionGroup = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+`;
+
+interface ActionButtonProps {
+  $color: 'green' | 'yellow' | 'red';
+}
+
+const ActionButton = styled.button<ActionButtonProps>`
+  padding: 0.25rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: color 0.2s;
+
+  ${props => {
+    switch (props.$color) {
+      case 'green':
+        return `
+          color: #22c55e;
+          &:hover { color: #16a34a; }
+        `;
+      case 'yellow':
+        return `
+          color: #eab308;
+          &:hover { color: #ca8a04; }
+        `;
+      case 'red':
+        return `
+          color: #ef4444;
+          &:hover { color: #dc2626; }
+        `;
+    }
+  }}
+
+  svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+`;
+
+// ============================================================================
+// Helper Components
+// ============================================================================
+
+function getStatusVariant(status: string): BadgeProps['$variant'] {
+  switch (status) {
+    case 'running':
+      return 'success';
+    case 'starting':
+    case 'provisioning':
+    case 'stopping':
+      return 'warning';
+    case 'pending':
+      return 'info';
+    case 'error':
+      return 'error';
+    case 'stopped':
+    case 'terminated':
+    default:
+      return 'default';
+  }
+}
+
+function shouldPulse(status: string): boolean {
+  return ['starting', 'provisioning', 'stopping'].includes(status);
+}
+
+function StatusBadge({ status }: { status: Instance['status'] }) {
   return (
-    <span className={`inline-flex px-2.5 py-0.5 text-xs font-medium rounded-full ${colors[status] || 'bg-gray-100'}`}>
+    <Badge $variant={getStatusVariant(status)} $pulse={shouldPulse(status)}>
       {status}
-    </span>
+    </Badge>
   );
 }
 
-function TopologyBadge({ topology }: { topology: string }) {
+function TopologyLabel({ topology }: { topology: string }) {
   const labels: Record<string, string> = {
     standalone: 'Standalone',
     distributed_minimal: 'Distributed',
@@ -40,11 +418,7 @@ function TopologyBadge({ topology }: { topology: string }) {
     victoria_full: 'Victoria Full',
   };
 
-  return (
-    <span className="inline-flex px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded">
-      {labels[topology] || topology}
-    </span>
-  );
+  return <TopologyBadge>{labels[topology] || topology}</TopologyBadge>;
 }
 
 function InstanceRow({
@@ -52,97 +426,103 @@ function InstanceRow({
   onStart,
   onStop,
   onDestroy,
+  toPath,
 }: {
   instance: Instance;
   onStart: (id: string) => void;
   onStop: (id: string) => void;
   onDestroy: (id: string) => void;
+  toPath: (path: string) => string;
 }) {
   const canStart = ['pending', 'stopped', 'provisioning'].includes(instance.status);
   const canStop = ['running', 'starting'].includes(instance.status);
   const canDestroy = !['terminated'].includes(instance.status);
+  const isExpired = new Date(instance.expires_at) < new Date();
 
   return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-6 py-4 whitespace-nowrap">
-        <Link to={`/instances/${instance.id}`} className="block">
-          <div className="text-sm font-medium text-gray-900 hover:text-splunk-green">
-            {instance.name}
-          </div>
-          <div className="text-xs text-gray-500 font-mono">{instance.id}</div>
-        </Link>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
+    <TableRow>
+      <TableCell>
+        <InstanceLink to={toPath(`instances/${instance.id}`)}>
+          <InstanceName>{instance.name}</InstanceName>
+          <InstanceId>{instance.id}</InstanceId>
+        </InstanceLink>
+      </TableCell>
+      <TableCell>
         <StatusBadge status={instance.status} />
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <TopologyBadge topology={instance.config.topology} />
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+      </TableCell>
+      <TableCell>
+        <TopologyLabel topology={instance.config.topology} />
+      </TableCell>
+      <TableCell>
         {instance.endpoints.web_url ? (
-          <a
+          <ExternalLink
             href={instance.endpoints.web_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-splunk-green hover:underline"
           >
             Open Web UI
-          </a>
+          </ExternalLink>
         ) : (
-          '-'
+          <MutedText>-</MutedText>
         )}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        <div title={format(new Date(instance.created_at), 'PPpp')}>
-          {formatDistanceToNow(new Date(instance.created_at), { addSuffix: true })}
-        </div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        <div
-          title={format(new Date(instance.expires_at), 'PPpp')}
-          className={new Date(instance.expires_at) < new Date() ? 'text-red-500' : ''}
-        >
-          {formatDistanceToNow(new Date(instance.expires_at), { addSuffix: true })}
-        </div>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-        <div className="flex justify-end gap-2">
+      </TableCell>
+      <TableCell title={format(new Date(instance.created_at), 'PPpp')}>
+        {formatDistanceToNow(new Date(instance.created_at), { addSuffix: true })}
+      </TableCell>
+      <TableCell>
+        {isExpired ? (
+          <ExpiredText title={format(new Date(instance.expires_at), 'PPpp')}>
+            {formatDistanceToNow(new Date(instance.expires_at), { addSuffix: true })}
+          </ExpiredText>
+        ) : (
+          <span title={format(new Date(instance.expires_at), 'PPpp')}>
+            {formatDistanceToNow(new Date(instance.expires_at), { addSuffix: true })}
+          </span>
+        )}
+      </TableCell>
+      <TableCell>
+        <ActionGroup>
           {canStart && (
-            <button
+            <ActionButton
               onClick={() => onStart(instance.id)}
-              className="p-1 text-green-600 hover:text-green-800"
+              $color="green"
               title="Start"
             >
-              <PlayIcon className="h-5 w-5" />
-            </button>
+              <PlayIcon />
+            </ActionButton>
           )}
           {canStop && (
-            <button
+            <ActionButton
               onClick={() => onStop(instance.id)}
-              className="p-1 text-yellow-600 hover:text-yellow-800"
+              $color="yellow"
               title="Stop"
             >
-              <StopIcon className="h-5 w-5" />
-            </button>
+              <StopIcon />
+            </ActionButton>
           )}
           {canDestroy && (
-            <button
+            <ActionButton
               onClick={() => onDestroy(instance.id)}
-              className="p-1 text-red-600 hover:text-red-800"
+              $color="red"
               title="Destroy"
             >
-              <TrashIcon className="h-5 w-5" />
-            </button>
+              <TrashIcon />
+            </ActionButton>
           )}
-        </div>
-      </td>
-    </tr>
+        </ActionGroup>
+      </TableCell>
+    </TableRow>
   );
 }
+
+// ============================================================================
+// Main Component
+// ============================================================================
 
 export default function Instances() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<string>('all');
+  const { toPath } = useTenantPath();
 
   const { data: instances = [], isLoading, refetch } = useQuery({
     queryKey: ['instances'],
@@ -188,101 +568,74 @@ export default function Instances() {
     : instances.filter((i) => i.status === filter);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Instances</h1>
-          <p className="mt-1 text-sm text-gray-500">
+    <PageContainer>
+      <PageHeaderRow>
+        <PageHeader>
+          <PageTitle>Instances</PageTitle>
+          <PageDescription>
             Manage your ephemeral Splunk Cloud Victoria instances
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => refetch()}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-          >
-            <ArrowPathIcon className="h-4 w-4 mr-1" />
+          </PageDescription>
+        </PageHeader>
+        <ButtonGroup>
+          <SecondaryButton onClick={() => refetch()}>
+            <ArrowPathIcon />
             Refresh
-          </button>
-          <Link
-            to="/instances/new"
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-splunk-green hover:bg-green-600"
-          >
-            <PlusIcon className="h-4 w-4 mr-1" />
+          </SecondaryButton>
+          <PrimaryButton to={toPath('instances/new')}>
+            <PlusIcon />
             New Instance
-          </Link>
-        </div>
-      </div>
+          </PrimaryButton>
+        </ButtonGroup>
+      </PageHeaderRow>
 
       {/* Filters */}
-      <div className="flex gap-2">
+      <FilterGroup>
         {['all', 'running', 'stopped', 'pending', 'error'].map((status) => (
-          <button
+          <FilterButton
             key={status}
             onClick={() => setFilter(status)}
-            className={`px-3 py-1 text-sm rounded-full ${
-              filter === status
-                ? 'bg-gray-900 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
+            $active={filter === status}
           >
             {status.charAt(0).toUpperCase() + status.slice(1)}
             {status !== 'all' && (
-              <span className="ml-1 text-xs">
+              <FilterCount>
                 ({instances.filter((i) => i.status === status).length})
-              </span>
+              </FilterCount>
             )}
-          </button>
+          </FilterButton>
         ))}
-      </div>
+      </FilterGroup>
 
       {/* Table */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+      <Card>
         {isLoading ? (
-          <div className="p-8 text-center text-gray-500">Loading instances...</div>
+          <LoadingMessage>Loading instances...</LoadingMessage>
         ) : filteredInstances.length === 0 ? (
-          <div className="p-8 text-center">
-            <p className="text-gray-500 mb-4">
+          <EmptyMessage>
+            <EmptyText>
               {filter === 'all' ? 'No instances yet' : `No ${filter} instances`}
-            </p>
+            </EmptyText>
             {filter === 'all' && (
-              <Link
-                to="/instances/new"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-splunk-green hover:bg-green-600"
-              >
-                <PlusIcon className="h-4 w-4 mr-1" />
+              <PrimaryButton to={toPath('instances/new')}>
+                <PlusIcon />
                 Create your first instance
-              </Link>
+              </PrimaryButton>
             )}
-          </div>
+          </EmptyMessage>
         ) : (
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <Table>
+            <TableHead>
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Topology
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  URL
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Created
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Expires
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+                <TableHeader>Name</TableHeader>
+                <TableHeader>Status</TableHeader>
+                <TableHeader>Topology</TableHeader>
+                <TableHeader>URL</TableHeader>
+                <TableHeader>Created</TableHeader>
+                <TableHeader>Expires</TableHeader>
+                <TableHeader>Actions</TableHeader>
               </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            </TableHead>
+            <TableBody>
               {filteredInstances.map((instance) => (
                 <InstanceRow
                   key={instance.id}
@@ -290,12 +643,13 @@ export default function Instances() {
                   onStart={(id) => startMutation.mutate(id)}
                   onStop={(id) => stopMutation.mutate(id)}
                   onDestroy={handleDestroy}
+                  toPath={toPath}
                 />
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
-    </div>
+      </Card>
+    </PageContainer>
   );
 }

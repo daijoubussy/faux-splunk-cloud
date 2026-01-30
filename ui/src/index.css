@@ -1,75 +1,61 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Base styles for Splunk UI Prisma Dark Theme */
 
-body {
-  @apply bg-gray-50 text-gray-900;
+/* Reset and base styles */
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
-/* Custom scrollbar */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  font-family: 'Splunk Platform Sans', 'Proxima Nova', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling for dark mode */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+  background: #1a1c20;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded-full;
+  background: #3c3f45;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400;
+  background: #4a4d54;
 }
 
-/* Status badges */
-.status-running {
-  @apply bg-green-100 text-green-800;
+/* Keyframe animations */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
-.status-starting {
-  @apply bg-yellow-100 text-yellow-800;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.status-stopped {
-  @apply bg-gray-100 text-gray-800;
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-.status-error {
-  @apply bg-red-100 text-red-800;
-}
-
-.status-pending {
-  @apply bg-blue-100 text-blue-800;
-}
-
-/* Threat level badges */
-.threat-script_kiddie {
-  @apply bg-gray-100 text-gray-700;
-}
-
-.threat-opportunistic {
-  @apply bg-yellow-100 text-yellow-700;
-}
-
-.threat-organized_crime {
-  @apply bg-orange-100 text-orange-700;
-}
-
-.threat-hacktivist {
-  @apply bg-purple-100 text-purple-700;
-}
-
-.threat-insider_threat {
-  @apply bg-pink-100 text-pink-700;
-}
-
-.threat-apt {
-  @apply bg-red-100 text-red-700;
-}
-
-.threat-nation_state {
-  @apply bg-red-200 text-red-900;
+.animate-spin {
+  animation: spin 1s linear infinite;
 }

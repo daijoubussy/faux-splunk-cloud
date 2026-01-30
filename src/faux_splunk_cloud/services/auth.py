@@ -120,7 +120,10 @@ class AuthService:
         """
         try:
             payload = jwt.decode(
-                token, self._secret_key, algorithms=[self._algorithm]
+                token,
+                self._secret_key,
+                algorithms=[self._algorithm],
+                options={"verify_aud": False},  # We validate stack separately
             )
             return TokenData(
                 sub=payload.get("sub", ""),

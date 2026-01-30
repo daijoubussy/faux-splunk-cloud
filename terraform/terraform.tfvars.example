@@ -1,0 +1,23 @@
+# Example Terraform Variables for Faux Splunk Cloud
+# Copy this to terraform.tfvars and fill in your values
+
+# Portal Configuration
+portal_host = "portal.fsc.orb.local"
+
+# Keycloak Configuration
+keycloak_url            = "http://keycloak:8080"
+keycloak_admin_user     = "admin"
+keycloak_admin_password = "admin"  # Change in production!
+keycloak_realm          = "faux-splunk"
+
+# Default Users
+default_admin_email    = "admin@faux-splunk.local"
+default_admin_password = "admin"  # Change in production!
+
+# Vault Configuration
+vault_address    = "http://vault:8200"
+vault_root_token = ""  # Set after Vault initialization
+
+# OIDC Secrets (generate with: openssl rand -hex 32)
+vault_oidc_secret     = "vault-oidc-secret"
+concourse_oidc_secret = "concourse-oidc-secret"

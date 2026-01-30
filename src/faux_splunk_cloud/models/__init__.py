@@ -28,6 +28,40 @@ from faux_splunk_cloud.models.instance import (
     InstanceStatus,
     InstanceTopology,
 )
+from faux_splunk_cloud.models.tenant import (
+    Tenant,
+    TenantCreate,
+    TenantList,
+    TenantSettings,
+    TenantStatus,
+    TenantUpdate,
+)
+from faux_splunk_cloud.models.impersonation import (
+    ActorContext,
+    ImpersonationRequest,
+    ImpersonationRequestCreate,
+    ImpersonationRequestStatus,
+    ImpersonationSession,
+    ImpersonationSessionStart,
+)
+from faux_splunk_cloud.models.audit import (
+    AuditAction,
+    AuditLog,
+    AuditLogList,
+    AuditLogQuery,
+    ResourceType,
+)
+from faux_splunk_cloud.models.idp_config import (
+    IdPStatus,
+    IdPType,
+    IdPValidationResult,
+    OIDCIdPConfig,
+    SAMLIdPConfig,
+    SplunkAuthConfig,
+    TenantIdPConfig,
+    TenantIdPConfigCreate,
+    TenantIdPConfigList,
+)
 
 __all__ = [
     # Instance models
@@ -48,4 +82,34 @@ __all__ = [
     "ACSAppListResponse",
     "ACSIPAllowList",
     "ACSIPAllowListEntry",
+    # Tenant models
+    "Tenant",
+    "TenantCreate",
+    "TenantList",
+    "TenantSettings",
+    "TenantStatus",
+    "TenantUpdate",
+    # Impersonation models
+    "ActorContext",
+    "ImpersonationRequest",
+    "ImpersonationRequestCreate",
+    "ImpersonationRequestStatus",
+    "ImpersonationSession",
+    "ImpersonationSessionStart",
+    # Audit models
+    "AuditAction",
+    "AuditLog",
+    "AuditLogList",
+    "AuditLogQuery",
+    "ResourceType",
+    # IdP Config models
+    "IdPStatus",
+    "IdPType",
+    "IdPValidationResult",
+    "OIDCIdPConfig",
+    "SAMLIdPConfig",
+    "SplunkAuthConfig",
+    "TenantIdPConfig",
+    "TenantIdPConfigCreate",
+    "TenantIdPConfigList",
 ]

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import styled, { keyframes } from 'styled-components';
+import { variables, pick } from '@splunk/themes';
 import {
   ArrowLeftIcon,
   BoltIcon,
@@ -14,25 +16,726 @@ import {
   DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { attacksApi } from '../api';
+import { useTenantPath } from '../hooks/useTenantPath';
 import type { AttackCampaign, AttackStep } from '../types';
 
+// ============================================================================
+// Animations
+// ============================================================================
+
+const spin = keyframes`
+  to { transform: rotate(360deg); }
+`;
+
+const pulse = keyframes`
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+`;
+
+// ============================================================================
+// Styled Components
+// ============================================================================
+
+const PageContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+`;
+
+const LoadingContainer = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 16rem;
+`;
+
+const Spinner = styled.div`
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid transparent;
+  border-bottom-color: ${variables.accentColorPositive};
+  border-radius: 50%;
+  animation: ${spin} 1s linear infinite;
+`;
+
+const BackLink = styled(Link)`
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  text-decoration: none;
+  margin-bottom: 0.5rem;
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.25rem;
+  }
+
+  &:hover {
+    color: ${pick({
+      prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+    })};
+  }
+`;
+
+const ErrorBanner = styled.div`
+  background-color: rgba(220, 53, 69, 0.1);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #dc3545;
+`;
+
+const Header = styled.div`
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+`;
+
+const HeaderLeft = styled.div``;
+
+const PageTitle = styled.h1`
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const CampaignId = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+`;
+
+const StartButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  background-color: ${variables.accentColorPositive};
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.5rem;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: #00a86b;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
+const PauseButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: white;
+  background-color: #f8be34;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.5rem;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: #e0a82e;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
+// Status Badge
+interface StatusBadgeProps {
+  $status: string;
+  $pulse?: boolean;
+}
+
+const StatusBadge = styled.span<StatusBadgeProps>`
+  display: inline-flex;
+  align-items: center;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid;
+
+  ${props => {
+    switch (props.$status) {
+      case 'pending':
+        return 'background-color: rgba(248, 190, 52, 0.1); color: #f8be34; border-color: rgba(248, 190, 52, 0.3);';
+      case 'running':
+        return 'background-color: rgba(220, 53, 69, 0.1); color: #dc3545; border-color: rgba(220, 53, 69, 0.3);';
+      case 'paused':
+        return 'background-color: rgba(128, 128, 128, 0.1); color: #808080; border-color: rgba(128, 128, 128, 0.3);';
+      case 'completed':
+        return 'background-color: rgba(0, 201, 125, 0.1); color: #00c97d; border-color: rgba(0, 201, 125, 0.3);';
+      case 'detected':
+        return 'background-color: rgba(0, 157, 224, 0.1); color: #009de0; border-color: rgba(0, 157, 224, 0.3);';
+      case 'failed':
+        return 'background-color: rgba(220, 53, 69, 0.1); color: #dc3545; border-color: rgba(220, 53, 69, 0.3);';
+      default:
+        return 'background-color: rgba(128, 128, 128, 0.1); color: #808080; border-color: rgba(128, 128, 128, 0.3);';
+    }
+  }}
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.375rem;
+    ${props => props.$pulse && `animation: ${pulse} 2s ease-in-out infinite;`}
+  }
+`;
+
+// Card
+const Card = styled.div`
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorSidebar, light: variables.backgroundColorSidebar },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+`;
+
+const OverviewGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+
+  @media (min-width: 768px) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+`;
+
+const StatBlock = styled.div``;
+
+const StatLabel = styled.h3`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  margin: 0;
+`;
+
+const StatValue = styled.p`
+  margin-top: 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  text-transform: capitalize;
+`;
+
+const ProgressContainer = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+`;
+
+const ProgressBar = styled.div`
+  flex: 1;
+  background-color: rgba(128, 128, 128, 0.2);
+  border-radius: 9999px;
+  height: 0.75rem;
+  overflow: hidden;
+`;
+
+interface ProgressFillProps {
+  $percent: number;
+}
+
+const ProgressFill = styled.div<ProgressFillProps>`
+  width: ${props => props.$percent}%;
+  height: 100%;
+  background-color: #dc3545;
+  border-radius: 9999px;
+  transition: width 0.5s ease;
+`;
+
+const ProgressText = styled.span`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+`;
+
+const StepsText = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const DetectionAlert = styled.div`
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background-color: rgba(0, 157, 224, 0.1);
+  border: 1px solid rgba(0, 157, 224, 0.3);
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: #009de0;
+  }
+`;
+
+const AlertContent = styled.div``;
+
+const AlertTitle = styled.p`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const AlertText = styled.p`
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  margin: 0;
+`;
+
+const MetadataGrid = styled.div`
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+
+  @media (min-width: 768px) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+`;
+
+const MetadataItem = styled.div``;
+
+const MetadataLabel = styled.h4`
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  margin: 0;
+`;
+
+const MetadataValue = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+`;
+
+const InstanceLink = styled(Link)`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${variables.accentColorPositive};
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
+// Tabs
+const TabsCard = styled.div`
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorSidebar, light: variables.backgroundColorSidebar },
+  })};
+  border: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  border-radius: 0.5rem;
+  overflow: hidden;
+`;
+
+const TabsHeader = styled.div`
+  border-bottom: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+`;
+
+const TabsNav = styled.nav`
+  display: flex;
+  margin-bottom: -1px;
+`;
+
+interface TabButtonProps {
+  $active: boolean;
+}
+
+const TabButton = styled.button<TabButtonProps>`
+  padding: 0.75rem 1.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: none;
+  border: none;
+  border-bottom: 2px solid ${props => props.$active
+    ? variables.accentColorPositive
+    : 'transparent'};
+  color: ${props => props.$active
+    ? variables.accentColorPositive
+    : pick({ prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted } })};
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+
+  &:hover {
+    color: ${props => props.$active
+      ? variables.accentColorPositive
+      : pick({ prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault } })};
+    border-bottom-color: ${props => props.$active
+      ? variables.accentColorPositive
+      : pick({ prisma: { dark: variables.borderColor, light: variables.borderColor } })};
+  }
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+    display: inline;
+    margin-right: 0.5rem;
+    vertical-align: text-bottom;
+  }
+`;
+
+const TabContent = styled.div`
+  padding: 1.5rem;
+`;
+
+// Step Timeline
+const TimelineContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+`;
+
+interface PhaseCardProps {
+  $active: boolean;
+}
+
+const PhaseCard = styled.div<PhaseCardProps>`
+  border: 1px solid ${props => props.$active
+    ? 'rgba(220, 53, 69, 0.3)'
+    : pick({ prisma: { dark: variables.borderColor, light: variables.borderColor } })};
+  border-radius: 0.5rem;
+  background-color: ${props => props.$active
+    ? 'rgba(220, 53, 69, 0.05)'
+    : 'transparent'};
+`;
+
+const PhaseHeader = styled.div`
+  padding: 0.75rem;
+  border-bottom: 1px solid ${pick({
+    prisma: { dark: variables.borderColor, light: variables.borderColor },
+  })};
+  background-color: ${pick({
+    prisma: { dark: variables.backgroundColorPage, light: variables.backgroundColorPage },
+  })};
+  border-radius: 0.5rem 0.5rem 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+`;
+
+const PhaseHeaderLeft = styled.div`
+  display: flex;
+  align-items: center;
+`;
+
+const PulsingIcon = styled.span`
+  animation: ${pulse} 2s ease-in-out infinite;
+  color: #dc3545;
+  margin-right: 0.5rem;
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+  }
+`;
+
+const PhaseName = styled.h4`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+  text-transform: capitalize;
+`;
+
+const PhaseStats = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+`;
+
+const CompletedStat = styled.span`
+  color: ${variables.accentColorPositive};
+`;
+
+const DetectedStat = styled.span`
+  color: #009de0;
+`;
+
+const PhaseBody = styled.div`
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+`;
+
+interface StepItemProps {
+  $status: 'detected' | 'success' | 'failed';
+}
+
+const StepItem = styled.div<StepItemProps>`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid;
+
+  ${props => {
+    switch (props.$status) {
+      case 'detected':
+        return 'background-color: rgba(0, 157, 224, 0.1); border-color: rgba(0, 157, 224, 0.3);';
+      case 'success':
+        return 'background-color: rgba(0, 201, 125, 0.1); border-color: rgba(0, 201, 125, 0.3);';
+      default:
+        return 'background-color: rgba(220, 53, 69, 0.1); border-color: rgba(220, 53, 69, 0.3);';
+    }
+  }}
+`;
+
+const StepInfo = styled.div`
+  display: flex;
+  align-items: center;
+`;
+
+const StepIcon = styled.span<{ $color: string }>`
+  margin-right: 0.5rem;
+  color: ${props => props.$color};
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+  }
+`;
+
+const StepDetails = styled.div``;
+
+const TechniqueName = styled.p`
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+  margin: 0;
+`;
+
+const TechniqueLink = styled.a`
+  font-size: 0.75rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  text-decoration: none;
+
+  &:hover {
+    color: ${variables.accentColorPositive};
+  }
+`;
+
+const StepTime = styled.span`
+  font-size: 0.75rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+// Log Viewer
+const LogHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+`;
+
+const LogCount = styled.span`
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const AutoScrollLabel = styled.label`
+  display: flex;
+  align-items: center;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+  cursor: pointer;
+
+  input {
+    margin-right: 0.5rem;
+    width: 1rem;
+    height: 1rem;
+    accent-color: ${variables.accentColorPositive};
+  }
+`;
+
+const LogContainer = styled.div`
+  background-color: #1a1a2e;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  height: 24rem;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.75rem;
+`;
+
+const LogEntry = styled.div`
+  color: #d4d4d4;
+  margin-bottom: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.125rem;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+`;
+
+const LogTime = styled.span`
+  color: #6a6a6a;
+`;
+
+interface LogSourceProps {
+  $severity?: string;
+}
+
+const LogSource = styled.span<LogSourceProps>`
+  color: ${props => {
+    switch (props.$severity) {
+      case 'high': return '#dc3545';
+      case 'medium': return '#f8be34';
+      default: return '#00c97d';
+    }
+  }};
+`;
+
+const EmptyState = styled.div`
+  text-align: center;
+  padding: 2rem;
+`;
+
+const EmptyIcon = styled.div`
+  margin: 0 auto;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+
+  svg {
+    width: 3rem;
+    height: 3rem;
+  }
+`;
+
+const EmptyTitle = styled.h3`
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: ${pick({
+    prisma: { dark: variables.contentColorDefault, light: variables.contentColorDefault },
+  })};
+`;
+
+const EmptyDescription = styled.p`
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: ${pick({
+    prisma: { dark: variables.contentColorMuted, light: variables.contentColorMuted },
+  })};
+`;
+
+const EmptyLogs = styled.p`
+  color: #6a6a6a;
+`;
+
+// ============================================================================
+// Helper Components
+// ============================================================================
+
 function CampaignStatusBadge({ status }: { status: AttackCampaign['status'] }) {
-  const config: Record<string, { color: string; icon: React.ElementType; pulse?: boolean }> = {
-    pending: { color: 'bg-yellow-100 text-yellow-700 border-yellow-300', icon: ClockIcon },
-    running: { color: 'bg-red-100 text-red-700 border-red-300', icon: BoltIcon, pulse: true },
-    paused: { color: 'bg-gray-100 text-gray-700 border-gray-300', icon: PauseIcon },
-    completed: { color: 'bg-green-100 text-green-700 border-green-300', icon: CheckCircleIcon },
-    detected: { color: 'bg-blue-100 text-blue-700 border-blue-300', icon: EyeIcon },
-    failed: { color: 'bg-red-100 text-red-700 border-red-300', icon: ExclamationTriangleIcon },
+  const config: Record<string, { icon: React.ElementType; pulse?: boolean }> = {
+    pending: { icon: ClockIcon },
+    running: { icon: BoltIcon, pulse: true },
+    paused: { icon: PauseIcon },
+    completed: { icon: CheckCircleIcon },
+    detected: { icon: EyeIcon },
+    failed: { icon: ExclamationTriangleIcon },
   };
 
-  const { color, icon: Icon, pulse } = config[status] || config.pending;
+  const { icon: Icon, pulse: shouldPulse } = config[status] || config.pending;
 
   return (
-    <span className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-full border ${color}`}>
-      <Icon className={`h-4 w-4 mr-1.5 ${pulse ? 'animate-pulse' : ''}`} />
+    <StatusBadge $status={status} $pulse={shouldPulse}>
+      <Icon />
       {status.charAt(0).toUpperCase() + status.slice(1)}
-    </span>
+    </StatusBadge>
   );
 }
 
@@ -50,7 +753,7 @@ function StepTimeline({ steps, currentPhase }: { steps: AttackStep[]; currentPha
   const activePhases = phases.filter((p) => stepsByPhase[p]?.length > 0);
 
   return (
-    <div className="space-y-4">
+    <TimelineContainer>
       {activePhases.map((phase) => {
         const phaseSteps = stepsByPhase[phase] || [];
         const isActive = phase === currentPhase;
@@ -58,65 +761,60 @@ function StepTimeline({ steps, currentPhase }: { steps: AttackStep[]; currentPha
         const detectedSteps = phaseSteps.filter((s) => s.detected).length;
 
         return (
-          <div key={phase} className={`border rounded-lg ${isActive ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
-            <div className="p-3 border-b border-gray-200 bg-gray-50 rounded-t-lg">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  {isActive && <BoltIcon className="h-4 w-4 text-red-500 mr-2 animate-pulse" />}
-                  <h4 className="text-sm font-medium text-gray-900 capitalize">
-                    {phase.replace(/_/g, ' ')}
-                  </h4>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-green-600">{completedSteps} completed</span>
-                  {detectedSteps > 0 && (
-                    <span className="text-blue-600">{detectedSteps} detected</span>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="p-3 space-y-2">
+          <PhaseCard key={phase} $active={isActive}>
+            <PhaseHeader>
+              <PhaseHeaderLeft>
+                {isActive && (
+                  <PulsingIcon>
+                    <BoltIcon />
+                  </PulsingIcon>
+                )}
+                <PhaseName>{phase.replace(/_/g, ' ')}</PhaseName>
+              </PhaseHeaderLeft>
+              <PhaseStats>
+                <CompletedStat>{completedSteps} completed</CompletedStat>
+                {detectedSteps > 0 && (
+                  <DetectedStat>{detectedSteps} detected</DetectedStat>
+                )}
+              </PhaseStats>
+            </PhaseHeader>
+            <PhaseBody>
               {phaseSteps.map((step) => (
-                <div
+                <StepItem
                   key={step.id}
-                  className={`flex items-center justify-between p-2 rounded ${
-                    step.detected
-                      ? 'bg-blue-50 border border-blue-200'
-                      : step.success
-                        ? 'bg-green-50 border border-green-200'
-                        : 'bg-red-50 border border-red-200'
-                  }`}
+                  $status={step.detected ? 'detected' : step.success ? 'success' : 'failed'}
                 >
-                  <div className="flex items-center">
-                    {step.detected ? (
-                      <EyeIcon className="h-4 w-4 text-blue-500 mr-2" />
-                    ) : step.success ? (
-                      <CheckCircleIcon className="h-4 w-4 text-green-500 mr-2" />
-                    ) : (
-                      <XCircleIcon className="h-4 w-4 text-red-500 mr-2" />
-                    )}
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{step.technique_name}</p>
-                      <a
+                  <StepInfo>
+                    <StepIcon $color={step.detected ? '#009de0' : step.success ? '#00c97d' : '#dc3545'}>
+                      {step.detected ? (
+                        <EyeIcon />
+                      ) : step.success ? (
+                        <CheckCircleIcon />
+                      ) : (
+                        <XCircleIcon />
+                      )}
+                    </StepIcon>
+                    <StepDetails>
+                      <TechniqueName>{step.technique_name}</TechniqueName>
+                      <TechniqueLink
                         href={`https://attack.mitre.org/techniques/${step.technique_id.replace('.', '/')}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-gray-500 hover:text-splunk-green"
                       >
                         {step.technique_id}
-                      </a>
-                    </div>
-                  </div>
-                  <span className="text-xs text-gray-500">
+                      </TechniqueLink>
+                    </StepDetails>
+                  </StepInfo>
+                  <StepTime>
                     {new Date(step.timestamp).toLocaleTimeString()}
-                  </span>
-                </div>
+                  </StepTime>
+                </StepItem>
               ))}
-            </div>
-          </div>
+            </PhaseBody>
+          </PhaseCard>
         );
       })}
-    </div>
+    </TimelineContainer>
   );
 }
 
@@ -138,52 +836,56 @@ function LogViewer({ campaignId }: { campaignId: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-48">
-        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-splunk-green"></div>
-      </div>
+      <LoadingContainer style={{ height: '12rem' }}>
+        <Spinner style={{ width: '1.5rem', height: '1.5rem' }} />
+      </LoadingContainer>
     );
   }
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-gray-500">{logs.length} log entries</span>
-        <label className="flex items-center text-sm text-gray-600">
+    <div>
+      <LogHeader>
+        <LogCount>{logs.length} log entries</LogCount>
+        <AutoScrollLabel>
           <input
             type="checkbox"
             checked={autoScroll}
             onChange={(e) => setAutoScroll(e.target.checked)}
-            className="mr-2 h-4 w-4 text-splunk-green focus:ring-splunk-green border-gray-300 rounded"
           />
           Auto-scroll
-        </label>
-      </div>
+        </AutoScrollLabel>
+      </LogHeader>
 
-      <div className="bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs">
+      <LogContainer>
         {logs.length === 0 ? (
-          <p className="text-gray-500">No logs yet...</p>
+          <EmptyLogs>No logs yet...</EmptyLogs>
         ) : (
           logs.map((log, index) => (
-            <div key={index} className="text-gray-300 mb-1 hover:bg-gray-800 px-1 rounded">
-              <span className="text-gray-500">{new Date(log._time as string || Date.now()).toLocaleTimeString()}</span>
+            <LogEntry key={index}>
+              <LogTime>{new Date(log._time as string || Date.now()).toLocaleTimeString()}</LogTime>
               {' '}
-              <span className={`${log.severity === 'high' ? 'text-red-400' : log.severity === 'medium' ? 'text-yellow-400' : 'text-green-400'}`}>
+              <LogSource $severity={log.severity as string}>
                 [{String(log.sourcetype || 'attack')}]
-              </span>
+              </LogSource>
               {' '}
               <span>{JSON.stringify(log, null, 0)}</span>
-            </div>
+            </LogEntry>
           ))
         )}
         <div ref={logsEndRef} />
-      </div>
+      </LogContainer>
     </div>
   );
 }
 
+// ============================================================================
+// Main Component
+// ============================================================================
+
 export default function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const { toPath } = useTenantPath();
   const [activeTab, setActiveTab] = useState<'steps' | 'logs'>('steps');
 
   const { data: campaign, isLoading, error } = useQuery({
@@ -216,26 +918,24 @@ export default function CampaignDetail() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-splunk-green"></div>
-      </div>
+      <LoadingContainer>
+        <Spinner />
+      </LoadingContainer>
     );
   }
 
   if (error || !campaign) {
     return (
-      <div className="space-y-4">
-        <Link to="/attacks/campaigns" className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700">
-          <ArrowLeftIcon className="h-4 w-4 mr-1" />
+      <PageContainer>
+        <BackLink to={toPath('attacks/campaigns')}>
+          <ArrowLeftIcon />
           Back to campaigns
-        </Link>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center">
-            <ExclamationTriangleIcon className="h-5 w-5 text-red-500 mr-2" />
-            <span className="text-red-700">Campaign not found</span>
-          </div>
-        </div>
-      </div>
+        </BackLink>
+        <ErrorBanner>
+          <ExclamationTriangleIcon style={{ width: '1.25rem', height: '1.25rem' }} />
+          <span>Campaign not found</span>
+        </ErrorBanner>
+      </PageContainer>
     );
   }
 
@@ -246,180 +946,162 @@ export default function CampaignDetail() {
     : 0;
 
   return (
-    <div className="space-y-6">
+    <PageContainer>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <Link to="/attacks/campaigns" className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 mb-2">
-            <ArrowLeftIcon className="h-4 w-4 mr-1" />
+      <Header>
+        <HeaderLeft>
+          <BackLink to={toPath('attacks/campaigns')}>
+            <ArrowLeftIcon />
             Back to campaigns
-          </Link>
-          <h1 className="text-2xl font-bold text-gray-900">{campaign.name}</h1>
-          <p className="mt-1 text-sm text-gray-500">Campaign ID: {campaign.id}</p>
-        </div>
-        <div className="flex items-center gap-3">
+          </BackLink>
+          <PageTitle>{campaign.name}</PageTitle>
+          <CampaignId>Campaign ID: {campaign.id}</CampaignId>
+        </HeaderLeft>
+        <ButtonGroup>
           {canStart && (
-            <button
+            <StartButton
               onClick={() => startMutation.mutate()}
               disabled={startMutation.isPending}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
             >
-              <PlayIcon className="h-4 w-4 mr-2" />
+              <PlayIcon />
               {campaign.status === 'paused' ? 'Resume' : 'Start'} Campaign
-            </button>
+            </StartButton>
           )}
           {canPause && (
-            <button
+            <PauseButton
               onClick={() => pauseMutation.mutate()}
               disabled={pauseMutation.isPending}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50"
             >
-              <PauseIcon className="h-4 w-4 mr-2" />
+              <PauseIcon />
               Pause Campaign
-            </button>
+            </PauseButton>
           )}
-        </div>
-      </div>
+        </ButtonGroup>
+      </Header>
 
       {/* Status Overview */}
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Status</h3>
-            <div className="mt-2">
+      <Card>
+        <OverviewGrid>
+          <StatBlock>
+            <StatLabel>Status</StatLabel>
+            <div style={{ marginTop: '0.5rem' }}>
               <CampaignStatusBadge status={campaign.status} />
             </div>
-          </div>
+          </StatBlock>
 
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Threat Actor</h3>
-            <p className="mt-2 text-lg font-semibold text-gray-900">{campaign.threat_actor_name}</p>
-          </div>
+          <StatBlock>
+            <StatLabel>Threat Actor</StatLabel>
+            <StatValue>{campaign.threat_actor_name}</StatValue>
+          </StatBlock>
 
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Current Phase</h3>
-            <p className="mt-2 text-lg font-semibold text-gray-900 capitalize">
-              {campaign.current_phase.replace(/_/g, ' ')}
-            </p>
-          </div>
+          <StatBlock>
+            <StatLabel>Current Phase</StatLabel>
+            <StatValue>{campaign.current_phase.replace(/_/g, ' ')}</StatValue>
+          </StatBlock>
 
-          <div>
-            <h3 className="text-sm font-medium text-gray-500">Progress</h3>
-            <div className="mt-2">
-              <div className="flex items-center gap-2">
-                <div className="flex-1 bg-gray-200 rounded-full h-3 overflow-hidden">
-                  <div
-                    className="bg-red-500 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-                <span className="text-sm font-medium text-gray-900">{progressPercent}%</span>
-              </div>
-              <p className="mt-1 text-sm text-gray-500">
+          <StatBlock>
+            <StatLabel>Progress</StatLabel>
+            <div style={{ marginTop: '0.5rem' }}>
+              <ProgressContainer>
+                <ProgressBar>
+                  <ProgressFill $percent={progressPercent} />
+                </ProgressBar>
+                <ProgressText>{progressPercent}%</ProgressText>
+              </ProgressContainer>
+              <StepsText>
                 {campaign.completed_steps} of {campaign.total_steps} steps completed
-              </p>
+              </StepsText>
             </div>
-          </div>
-        </div>
+          </StatBlock>
+        </OverviewGrid>
 
         {/* Detection Alert */}
         {campaign.detected && (
-          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center">
-              <EyeIcon className="h-5 w-5 text-blue-500 mr-2" />
-              <div>
-                <p className="text-sm font-medium text-blue-900">Attack Detected!</p>
-                <p className="text-sm text-blue-700">
-                  Detection occurred at step {campaign.detected_at_step} of {campaign.total_steps}
-                </p>
-              </div>
-            </div>
-          </div>
+          <DetectionAlert>
+            <EyeIcon />
+            <AlertContent>
+              <AlertTitle>Attack Detected!</AlertTitle>
+              <AlertText>
+                Detection occurred at step {campaign.detected_at_step} of {campaign.total_steps}
+              </AlertText>
+            </AlertContent>
+          </DetectionAlert>
         )}
 
         {/* Timestamps */}
-        <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4 pt-6 border-t border-gray-200">
-          <div>
-            <h4 className="text-xs font-medium text-gray-500 uppercase">Target Instance</h4>
-            <Link
-              to={`/instances/${campaign.target_instance_id}`}
-              className="mt-1 text-sm text-splunk-green hover:underline"
-            >
+        <MetadataGrid>
+          <MetadataItem>
+            <MetadataLabel>Target Instance</MetadataLabel>
+            <InstanceLink to={toPath(`instances/${campaign.target_instance_id}`)}>
               {campaign.target_instance_id}
-            </Link>
-          </div>
-          <div>
-            <h4 className="text-xs font-medium text-gray-500 uppercase">Started</h4>
-            <p className="mt-1 text-sm text-gray-900">
+            </InstanceLink>
+          </MetadataItem>
+          <MetadataItem>
+            <MetadataLabel>Started</MetadataLabel>
+            <MetadataValue>
               {campaign.start_time ? new Date(campaign.start_time).toLocaleString() : 'Not started'}
-            </p>
-          </div>
-          <div>
-            <h4 className="text-xs font-medium text-gray-500 uppercase">Ended</h4>
-            <p className="mt-1 text-sm text-gray-900">
+            </MetadataValue>
+          </MetadataItem>
+          <MetadataItem>
+            <MetadataLabel>Ended</MetadataLabel>
+            <MetadataValue>
               {campaign.end_time ? new Date(campaign.end_time).toLocaleString() : '-'}
-            </p>
-          </div>
-          <div>
-            <h4 className="text-xs font-medium text-gray-500 uppercase">Duration</h4>
-            <p className="mt-1 text-sm text-gray-900">
+            </MetadataValue>
+          </MetadataItem>
+          <MetadataItem>
+            <MetadataLabel>Duration</MetadataLabel>
+            <MetadataValue>
               {campaign.start_time && campaign.end_time
                 ? `${Math.round((new Date(campaign.end_time).getTime() - new Date(campaign.start_time).getTime()) / 60000)} minutes`
                 : campaign.start_time
                   ? 'In progress...'
                   : '-'}
-            </p>
-          </div>
-        </div>
-      </div>
+            </MetadataValue>
+          </MetadataItem>
+        </MetadataGrid>
+      </Card>
 
       {/* Tabs */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="border-b border-gray-200">
-          <nav className="flex -mb-px">
-            <button
+      <TabsCard>
+        <TabsHeader>
+          <TabsNav>
+            <TabButton
+              $active={activeTab === 'steps'}
               onClick={() => setActiveTab('steps')}
-              className={`px-6 py-3 text-sm font-medium border-b-2 ${
-                activeTab === 'steps'
-                  ? 'border-splunk-green text-splunk-green'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
             >
-              <BoltIcon className="h-4 w-4 inline mr-2" />
+              <BoltIcon />
               Attack Steps ({steps.length})
-            </button>
-            <button
+            </TabButton>
+            <TabButton
+              $active={activeTab === 'logs'}
               onClick={() => setActiveTab('logs')}
-              className={`px-6 py-3 text-sm font-medium border-b-2 ${
-                activeTab === 'logs'
-                  ? 'border-splunk-green text-splunk-green'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
             >
-              <DocumentTextIcon className="h-4 w-4 inline mr-2" />
+              <DocumentTextIcon />
               Generated Logs
-            </button>
-          </nav>
-        </div>
+            </TabButton>
+          </TabsNav>
+        </TabsHeader>
 
-        <div className="p-6">
+        <TabContent>
           {activeTab === 'steps' ? (
             steps.length === 0 ? (
-              <div className="text-center py-8">
-                <BoltIcon className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">No steps executed yet</h3>
-                <p className="mt-1 text-sm text-gray-500">
+              <EmptyState>
+                <EmptyIcon>
+                  <BoltIcon />
+                </EmptyIcon>
+                <EmptyTitle>No steps executed yet</EmptyTitle>
+                <EmptyDescription>
                   Start the campaign to begin the attack simulation.
-                </p>
-              </div>
+                </EmptyDescription>
+              </EmptyState>
             ) : (
               <StepTimeline steps={steps} currentPhase={campaign.current_phase} />
             )
           ) : (
             <LogViewer campaignId={campaign.id} />
           )}
-        </div>
-      </div>
-    </div>
+        </TabContent>
+      </TabsCard>
+    </PageContainer>
   );
 }

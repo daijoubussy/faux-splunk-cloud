@@ -7,10 +7,13 @@ Manages the complete lifecycle of ephemeral Splunk Cloud Victoria instances:
 - Health monitoring
 - Automatic cleanup on TTL expiration
 - Integration with Docker/Kubernetes orchestration
+
+Optimized for ARM64 emulation with extended timeouts and exponential backoff.
 """
 
 import asyncio
 import logging
+import random
 import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -422,26 +425,68 @@ class InstanceManager:
         return new_status
 
     async def wait_for_ready(
-        self, instance_id: str, timeout_seconds: int = 300
+        self, instance_id: str, timeout_seconds: int = 600
     ) -> Instance:
-        """Wait for an instance to become ready."""
+        """
+        Wait for an instance to become ready.
+
+        Uses exponential backoff to reduce polling overhead,
+        especially important for emulated x86 containers on ARM64.
+
+        Args:
+            instance_id: Instance to wait for
+            timeout_seconds: Maximum wait time (default 600s for emulation)
+
+        Returns:
+            The ready instance
+        """
         instance = self._instances.get(instance_id)
         if not instance:
             raise ValueError(f"Instance {instance_id} not found")
 
         start_time = datetime.utcnow()
+        check_count = 0
+        error_count = 0
+
+        # Exponential backoff: start at 3s, max 30s between checks
+        base_interval = 3.0
+        max_interval = 30.0
+
         while (datetime.utcnow() - start_time).total_seconds() < timeout_seconds:
             status = await self.get_instance_health(instance_id)
+
             if status == InstanceStatus.RUNNING:
+                elapsed = (datetime.utcnow() - start_time).total_seconds()
+                logger.info(f"Instance {instance_id} ready after {check_count} checks ({elapsed:.1f}s)")
                 return self._instances[instance_id]
             elif status == InstanceStatus.ERROR:
-                raise RuntimeError(f"Instance {instance_id} failed to start")
-            await asyncio.sleep(5)
+                error_count += 1
+                # On error, allow a few retries before failing (emulation can be flaky)
+                if error_count > 3:
+                    raise RuntimeError(f"Instance {instance_id} failed to start after {error_count} errors")
+                logger.warning(f"Instance {instance_id} health check error ({error_count}/3)")
+
+            check_count += 1
+
+            # Exponential backoff with jitter
+            interval = min(base_interval * (1.5 ** min(check_count, 8)), max_interval)
+            # Add small jitter (0-1 second) to prevent thundering herd
+            jitter = random.random()
+            await asyncio.sleep(interval + jitter)
 
         raise TimeoutError(f"Instance {instance_id} did not become ready within {timeout_seconds}s")
 
-    def get_splunk_client(self, instance_id: str) -> SplunkClientService:
-        """Get a Splunk SDK client for an instance."""
+    def get_splunk_client(self, instance_id: str, retry: bool = True) -> SplunkClientService:
+        """
+        Get a Splunk SDK client for an instance.
+
+        Args:
+            instance_id: The instance ID
+            retry: If True, retry connection on failure (default True)
+
+        Returns:
+            Connected SplunkClientService
+        """
         instance = self._instances.get(instance_id)
         if not instance:
             raise ValueError(f"Instance {instance_id} not found")
@@ -460,15 +505,25 @@ class InstanceManager:
             host = parsed.hostname or "localhost"
             port = parsed.port or 8089
 
+            # Create client with extended timeout for emulation
             self._clients[instance_id] = SplunkClientService(
                 host=host,
                 port=port,
                 username="admin",
                 password=instance.credentials.admin_password,
                 verify_ssl=False,
+                timeout=60,  # Extended timeout for emulated containers
             )
 
-        return self._clients[instance_id]
+        client = self._clients[instance_id]
+
+        # Verify connection is still valid
+        if retry and not client.is_connected():
+            # Reconnect if connection was lost
+            logger.info(f"Reconnecting Splunk client for instance {instance_id}")
+            client.connect()
+
+        return client
 
     async def get_instance_logs(
         self, instance_id: str, container: str | None = None, tail: int = 100
