@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from faux_splunk_cloud.api.routes import acs, attacks, health, instances
+from faux_splunk_cloud.api.routes import acs, attacks, health, instances, workflows
 from faux_splunk_cloud.config import settings
 from faux_splunk_cloud.services.instance_manager import instance_manager
 
@@ -103,6 +103,11 @@ Generate realistic security logs based on MITRE ATT&CK techniques.
         attacks.router,
         prefix="/api/v1/attacks",
         tags=["Attack Simulation"],
+    )
+    app.include_router(
+        workflows.router,
+        prefix="/api/v1",
+        tags=["Workflows"],
     )
 
     # Exception handlers
