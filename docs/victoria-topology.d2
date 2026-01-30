@@ -1,0 +1,236 @@
+# Splunk Cloud Victoria Experience Topology
+# This diagram shows the components of a Victoria-like deployment
+#
+# Reference: Splunk Validated Architectures
+# https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
+
+direction: down
+
+title: Victoria Experience Topology {
+  near: top-center
+  shape: text
+  style.font-size: 24
+  style.bold: true
+}
+
+# ============================================================================
+# Data Sources
+# ============================================================================
+
+data_sources: Data Sources {
+  style.fill: "#E5E7EB"
+  style.stroke: "#9CA3AF"
+
+  apps: Applications {
+    icon: https://icons.terrastruct.com/tech%2Freact.svg
+  }
+
+  infra: Infrastructure {
+    icon: https://icons.terrastruct.com/tech%2Fkubernetes.svg
+  }
+
+  security: Security Devices {
+    icon: https://icons.terrastruct.com/aws%2FSecurity%2C%20Identity%2C%20%26%20Compliance%2FAWS-Shield.svg
+  }
+}
+
+# ============================================================================
+# Data Ingestion Layer
+# ============================================================================
+
+ingestion: Data Ingestion {
+  style.fill: "#DBEAFE"
+  style.stroke: "#3B82F6"
+
+  hec: HTTP Event Collector (HEC) {
+    style.fill: "#93C5FD"
+    port: Port 8088 (HTTPS)
+    ack: Indexer Acknowledgment
+  }
+
+  s2s: Splunk-to-Splunk (S2S) {
+    style.fill: "#93C5FD"
+    port: Port 9997
+    lb: Load Balanced
+  }
+
+  forwarders: Universal Forwarders {
+    style.fill: "#93C5FD"
+    uf1: UF 1
+    uf2: UF 2
+    uf3: UF N
+  }
+}
+
+# ============================================================================
+# Indexer Cluster (Victoria Experience)
+# ============================================================================
+
+idx_cluster: Indexer Cluster {
+  style.fill: "#FEF3C7"
+  style.stroke: "#F59E0B"
+
+  cm: Cluster Manager {
+    style.fill: "#FCD34D"
+    icon: https://icons.terrastruct.com/essentials%2F001-cog.svg
+    role: |md
+      - Coordinates bucket replication
+      - Enforces replication/search factors
+      - Authoritative source for peers
+    |
+  }
+
+  indexers: Indexers (Peer Nodes) {
+    style.fill: "#FDE68A"
+
+    idx1: Indexer 1 {
+      az: AZ-1
+      hot: Hot/Warm Buckets
+      cold: Cold Buckets
+    }
+
+    idx2: Indexer 2 {
+      az: AZ-2
+      hot: Hot/Warm Buckets
+      cold: Cold Buckets
+    }
+
+    idx3: Indexer 3 {
+      az: AZ-3
+      hot: Hot/Warm Buckets
+      cold: Cold Buckets
+    }
+  }
+
+  replication: |md
+    **Replication Factor: 3**
+    **Search Factor: 2**
+
+    Data replicated across 3 AZs
+    for high availability
+  |
+}
+
+# ============================================================================
+# Search Head Cluster (Victoria Experience)
+# ============================================================================
+
+shc: Search Head Cluster {
+  style.fill: "#D1FAE5"
+  style.stroke: "#10B981"
+
+  deployer: Deployer {
+    style.fill: "#6EE7B7"
+    icon: https://icons.terrastruct.com/essentials%2F213-upload.svg
+    role: |md
+      - Distributes apps to SHC
+      - Configuration deployment
+      - Bundle management
+    |
+  }
+
+  members: SHC Members {
+    style.fill: "#A7F3D0"
+
+    sh1: Search Head 1 {
+      captain: "★ Captain"
+      web: Web UI (8000)
+      api: API (8089)
+    }
+
+    sh2: Search Head 2 {
+      web: Web UI (8000)
+      api: API (8089)
+    }
+
+    sh3: Search Head 3 {
+      web: Web UI (8000)
+      api: API (8089)
+    }
+  }
+
+  victoria_features: |md
+    **Victoria Experience Features:**
+    - Apps auto-installed on all SHs
+    - Real-time search enabled
+    - No IDM required
+    - Modular inputs on SHs
+  |
+}
+
+# ============================================================================
+# Load Balancer
+# ============================================================================
+
+lb: Load Balancer {
+  style.fill: "#E0E7FF"
+  style.stroke: "#6366F1"
+
+  web_lb: Web UI Load Balancer {
+    port: Port 443
+  }
+}
+
+# ============================================================================
+# Users
+# ============================================================================
+
+users: Users {
+  style.fill: "#FCE7F3"
+  style.stroke: "#EC4899"
+
+  analysts: Security Analysts
+  admins: Splunk Admins
+  developers: Developers
+}
+
+# ============================================================================
+# ACS API (Admin Config Service)
+# ============================================================================
+
+acs: ACS API {
+  style.fill: "#F3E8FF"
+  style.stroke: "#A855F7"
+
+  endpoint: admin.splunk.com/{stack}
+  operations: |md
+    **Supported Operations:**
+    - Index Management
+    - HEC Token Management
+    - App Management (Victoria)
+    - IP Allow Lists
+    - Limits Configuration
+  |
+}
+
+# ============================================================================
+# Connections
+# ============================================================================
+
+# Data flow
+data_sources.apps -> ingestion.hec: "Events (JSON)"
+data_sources.infra -> ingestion.forwarders: "Logs"
+data_sources.security -> ingestion.s2s: "Security Logs"
+
+ingestion.hec -> idx_cluster.indexers
+ingestion.s2s -> idx_cluster.indexers
+ingestion.forwarders -> ingestion.s2s
+
+# Cluster management
+idx_cluster.cm -> idx_cluster.indexers: "Coordinate"
+
+# Search head cluster
+shc.deployer -> shc.members: "Deploy Apps"
+shc.members.sh1 -> shc.members.sh2: "Replicate"
+shc.members.sh2 -> shc.members.sh3: "Replicate"
+
+# Search
+shc.members -> idx_cluster.indexers: "Distributed Search"
+
+# User access
+users -> lb.web_lb: "HTTPS"
+lb.web_lb -> shc.members: "Load Balance"
+
+# ACS API
+acs -> shc.deployer: "App Install"
+acs -> idx_cluster.cm: "Index Config"

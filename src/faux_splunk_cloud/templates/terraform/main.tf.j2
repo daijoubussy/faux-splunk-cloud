@@ -1,0 +1,226 @@
+# Terraform Configuration for Faux Splunk Cloud
+# Demonstrates infrastructure-as-code deployment using the
+# official Splunk Terraform Provider patterns
+#
+# This configuration creates ephemeral Splunk instances and
+# manages them via the ACS-compatible API
+
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    # Faux Splunk Cloud provider (ACS-compatible)
+    fauxsplunk = {
+      source  = "daijoubussy/fauxsplunk"
+      version = ">= 0.1.0"
+    }
+
+    # Docker provider for local deployments
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "~> 3.0"
+    }
+
+    # Vault provider for secrets
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 3.0"
+    }
+  }
+}
+
+# =========================================================================
+# Provider Configuration
+# =========================================================================
+
+provider "fauxsplunk" {
+  api_url   = var.fsc_api_url
+  api_token = var.fsc_api_token
+}
+
+provider "docker" {
+  host = "unix:///var/run/docker.sock"
+}
+
+provider "vault" {
+  address = var.vault_address
+  token   = var.vault_token
+}
+
+# =========================================================================
+# Variables
+# =========================================================================
+
+variable "fsc_api_url" {
+  description = "Faux Splunk Cloud API URL"
+  type        = string
+  default     = "http://localhost:8800"
+}
+
+variable "fsc_api_token" {
+  description = "Faux Splunk Cloud API token"
+  type        = string
+  sensitive   = true
+}
+
+variable "vault_address" {
+  description = "HashiCorp Vault address"
+  type        = string
+  default     = "http://localhost:8200"
+}
+
+variable "vault_token" {
+  description = "Vault authentication token"
+  type        = string
+  sensitive   = true
+}
+
+variable "instance_name" {
+  description = "Name for the Splunk instance"
+  type        = string
+  default     = "terraform-managed"
+}
+
+variable "topology" {
+  description = "Instance topology (standalone, distributed_minimal, victoria_full)"
+  type        = string
+  default     = "standalone"
+}
+
+variable "ttl_hours" {
+  description = "Instance time-to-live in hours"
+  type        = number
+  default     = 24
+}
+
+variable "labels" {
+  description = "Labels to apply to the instance"
+  type        = map(string)
+  default     = {}
+}
+
+# =========================================================================
+# Vault Secrets
+# =========================================================================
+
+# Store generated credentials in Vault
+resource "vault_kv_secret_v2" "splunk_credentials" {
+  mount = "secret"
+  name  = "faux-splunk-cloud/${var.instance_name}"
+
+  data_json = jsonencode({
+    admin_password = fauxsplunk_instance.main.credentials.admin_password
+    hec_token      = fauxsplunk_instance.main.credentials.hec_token
+    acs_token      = fauxsplunk_instance.main.credentials.acs_token
+  })
+}
+
+# =========================================================================
+# Faux Splunk Cloud Instance
+# =========================================================================
+
+resource "fauxsplunk_instance" "main" {
+  name = var.instance_name
+
+  config {
+    topology               = var.topology
+    experience             = "victoria"
+    enable_hec             = true
+    enable_realtime_search = true
+    create_default_indexes = true
+    memory_mb              = 2048
+    cpu_cores              = 1.0
+  }
+
+  ttl_hours = var.ttl_hours
+
+  labels = merge(var.labels, {
+    managed_by = "terraform"
+    created_at = timestamp()
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# =========================================================================
+# ACS-Managed Resources (using Splunk Terraform Provider patterns)
+# =========================================================================
+
+# Create additional indexes via ACS API
+resource "fauxsplunk_acs_index" "app_logs" {
+  instance_id = fauxsplunk_instance.main.id
+
+  name           = "app_logs"
+  datatype       = "event"
+  searchable_days = 90
+  max_data_size_mb = 100000
+}
+
+resource "fauxsplunk_acs_index" "metrics" {
+  instance_id = fauxsplunk_instance.main.id
+
+  name           = "app_metrics"
+  datatype       = "metric"
+  searchable_days = 30
+  max_data_size_mb = 50000
+}
+
+# Create additional HEC tokens
+resource "fauxsplunk_acs_hec_token" "app_token" {
+  instance_id = fauxsplunk_instance.main.id
+
+  name          = "app-events"
+  default_index = fauxsplunk_acs_index.app_logs.name
+  indexes       = [fauxsplunk_acs_index.app_logs.name, "main"]
+  use_ack       = true
+}
+
+resource "fauxsplunk_acs_hec_token" "metrics_token" {
+  instance_id = fauxsplunk_instance.main.id
+
+  name          = "app-metrics"
+  default_index = fauxsplunk_acs_index.metrics.name
+  indexes       = [fauxsplunk_acs_index.metrics.name]
+}
+
+# =========================================================================
+# Outputs
+# =========================================================================
+
+output "instance_id" {
+  description = "The instance ID"
+  value       = fauxsplunk_instance.main.id
+}
+
+output "web_url" {
+  description = "Splunk Web UI URL"
+  value       = fauxsplunk_instance.main.endpoints.web_url
+}
+
+output "api_url" {
+  description = "Splunkd REST API URL"
+  value       = fauxsplunk_instance.main.endpoints.api_url
+}
+
+output "hec_url" {
+  description = "HTTP Event Collector URL"
+  value       = fauxsplunk_instance.main.endpoints.hec_url
+}
+
+output "acs_url" {
+  description = "ACS API URL"
+  value       = fauxsplunk_instance.main.endpoints.acs_url
+}
+
+output "expires_at" {
+  description = "Instance expiration time"
+  value       = fauxsplunk_instance.main.expires_at
+}
+
+# Sensitive outputs stored in Vault
+output "vault_secret_path" {
+  description = "Path to credentials in Vault"
+  value       = vault_kv_secret_v2.splunk_credentials.name
+}

@@ -1,0 +1,122 @@
+# Faux Splunk Cloud - Distributed Minimal Topology
+# Separate Search Head and Indexer - minimum Victoria-like experience.
+#
+# This topology provides:
+# - Dedicated Search Head (like Victoria SH)
+# - Dedicated Indexer (simulates Victoria indexer tier)
+# - HEC endpoint on indexer
+#
+# Reference: Splunk Validated Architectures - Distributed Non-Clustered (S1)
+# https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
+
+version: "3.8"
+
+networks:
+  {{ network_name }}:
+    driver: bridge
+    name: {{ network_name }}
+
+volumes:
+  sh_var:
+    name: {{ instance_id }}_sh_var
+  sh_etc:
+    name: {{ instance_id }}_sh_etc
+  idx_var:
+    name: {{ instance_id }}_idx_var
+  idx_etc:
+    name: {{ instance_id }}_idx_etc
+
+services:
+  # =========================================================================
+  # Search Head
+  # In Victoria Experience, search heads are dedicated to search operations
+  # =========================================================================
+  search-head:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_sh
+    hostname: search-head
+    networks:
+      - {{ network_name }}
+    ports:
+      # Splunk Web UI
+      - "{{ web_port }}:8000"
+      # Splunkd REST API
+      - "{{ api_port }}:8089"
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "{{ admin_password }}"
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_ROLE: "splunk_search_head"
+      SPLUNK_INDEXER_URL: "indexer"
+      SPLUNK_SEARCH_HEAD_URL: "search-head"
+      # Victoria Experience: real-time search enabled by default
+      {% if enable_realtime_search %}
+      SPLUNK_BEFORE_START_CMD_1: "version ${SPLUNK_START_ARGS}"
+      {% endif %}
+    volumes:
+      - sh_var:/opt/splunk/var
+      - sh_etc:/opt/splunk/etc
+      {% if custom_configs_path %}
+      - {{ custom_configs_path }}:/opt/splunk/etc/apps/faux_splunk_config:ro
+      {% endif %}
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    depends_on:
+      indexer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.role: "search_head"
+      com.faux-splunk-cloud.topology: "distributed_minimal"
+      com.faux-splunk-cloud.experience: "{{ experience }}"
+
+  # =========================================================================
+  # Indexer
+  # Handles data ingestion and storage
+  # =========================================================================
+  indexer:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_idx
+    hostname: indexer
+    networks:
+      - {{ network_name }}
+    ports:
+      # HEC endpoint
+      - "{{ hec_port }}:8088"
+      # S2S receiving port
+      - "{{ s2s_port }}:9997"
+      # Indexer management API (internal)
+      - "{{ idx_api_port }}:8089"
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "{{ admin_password }}"
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_ROLE: "splunk_indexer"
+      SPLUNK_ENABLE_LISTEN: "9997"
+    volumes:
+      - idx_var:/opt/splunk/var
+      - idx_etc:/opt/splunk/etc
+      {% if custom_configs_path %}
+      - {{ custom_configs_path }}:/opt/splunk/etc/apps/faux_splunk_config:ro
+      {% endif %}
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.role: "indexer"
+      com.faux-splunk-cloud.topology: "distributed_minimal"
+      com.faux-splunk-cloud.experience: "{{ experience }}"

@@ -1,0 +1,174 @@
+# Faux Splunk Cloud - Infrastructure Services
+# Containerized service providers for enterprise deployment
+#
+# Services:
+# - Vault: Secrets management
+# - Step CA: Certificate authority for TLS
+# - Traefik: Reverse proxy and load balancer
+# - Registry: Local container registry for air-gapped deployments
+#
+# Usage: docker compose -f docker-compose.infrastructure.yml up -d
+
+version: "3.8"
+
+networks:
+  fsc-infra:
+    driver: bridge
+    name: fsc-infrastructure
+
+volumes:
+  vault_data:
+    name: fsc_vault_data
+  vault_logs:
+    name: fsc_vault_logs
+  step_ca_data:
+    name: fsc_step_ca_data
+  traefik_certs:
+    name: fsc_traefik_certs
+  registry_data:
+    name: fsc_registry_data
+
+services:
+  # =========================================================================
+  # HashiCorp Vault - Secrets Management
+  # Stores Splunk admin passwords, HEC tokens, certificates
+  # =========================================================================
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: fsc-vault
+    hostname: vault
+    networks:
+      - fsc-infra
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "fsc-dev-token"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault_data:/vault/data
+      - vault_logs:/vault/logs
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.faux-splunk-cloud.service: "vault"
+      com.faux-splunk-cloud.role: "secrets"
+      traefik.enable: "true"
+      traefik.http.routers.vault.rule: "Host(`vault.fsc.local`)"
+      traefik.http.services.vault.loadbalancer.server.port: "8200"
+
+  # =========================================================================
+  # Smallstep Step CA - Certificate Authority
+  # Issues TLS certificates for Splunk instances
+  # =========================================================================
+  step-ca:
+    image: smallstep/step-ca:0.25
+    container_name: fsc-step-ca
+    hostname: step-ca
+    networks:
+      - fsc-infra
+    ports:
+      - "9000:9000"
+    environment:
+      DOCKER_STEPCA_INIT_NAME: "Faux Splunk Cloud CA"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "step-ca,localhost,*.fsc.local"
+      DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT: "true"
+      DOCKER_STEPCA_INIT_ACME: "true"
+    volumes:
+      - step_ca_data:/home/step
+    healthcheck:
+      test: ["CMD", "step", "ca", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.faux-splunk-cloud.service: "step-ca"
+      com.faux-splunk-cloud.role: "pki"
+
+  # =========================================================================
+  # Traefik - Reverse Proxy & Load Balancer
+  # Routes traffic to Splunk instances, handles TLS termination
+  # =========================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: fsc-traefik
+    hostname: traefik
+    networks:
+      - fsc-infra
+    ports:
+      # HTTP entrypoint
+      - "80:80"
+      # HTTPS entrypoint
+      - "443:443"
+      # Traefik dashboard
+      - "8080:8080"
+    command:
+      # API and dashboard
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=fsc-infrastructure"
+      # File provider for dynamic config
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # ACME with Step CA
+      - "--certificatesresolvers.step.acme.email=admin@fsc.local"
+      - "--certificatesresolvers.step.acme.storage=/certs/acme.json"
+      - "--certificatesresolvers.step.acme.caserver=https://step-ca:9000/acme/acme/directory"
+      - "--certificatesresolvers.step.acme.tlschallenge=true"
+      # Logging
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/certs
+      - ./traefik:/etc/traefik/dynamic:ro
+    depends_on:
+      - step-ca
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.faux-splunk-cloud.service: "traefik"
+      com.faux-splunk-cloud.role: "proxy"
+
+  # =========================================================================
+  # Local Registry - Container Image Registry
+  # For air-gapped deployments and caching Splunk images
+  # =========================================================================
+  registry:
+    image: registry:2
+    container_name: fsc-registry
+    hostname: registry
+    networks:
+      - fsc-infra
+    ports:
+      - "5000:5000"
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Origin: "[*]"
+    volumes:
+      - registry_data:/var/lib/registry
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/v2/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.faux-splunk-cloud.service: "registry"
+      com.faux-splunk-cloud.role: "registry"
+      traefik.enable: "true"
+      traefik.http.routers.registry.rule: "Host(`registry.fsc.local`)"
+      traefik.http.services.registry.loadbalancer.server.port: "5000"

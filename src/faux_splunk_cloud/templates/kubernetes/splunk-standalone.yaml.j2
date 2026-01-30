@@ -1,0 +1,321 @@
+# Faux Splunk Cloud - Kubernetes Standalone Deployment
+# Uses ConfigMap with default.yml for configuration
+#
+# Reference: Splunk docker project best practices
+# https://splunk.github.io/docker-splunk/
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    faux-splunk-cloud/experience: {{ experience }}
+
+---
+# ConfigMap containing default.yml configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance_id }}-defaults
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: config
+data:
+  default.yml: |
+{{ defaults_yaml | indent(4) }}
+
+---
+# Secret for sensitive data
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ instance_id }}-secrets
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+type: Opaque
+stringData:
+  admin-password: "{{ admin_password }}"
+  {% if hec_token %}
+  hec-token: "{{ hec_token }}"
+  {% endif %}
+  cluster-secret: "{{ cluster_secret }}"
+
+---
+# PersistentVolumeClaim for Splunk data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance_id }}-var
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ storage_size | default('10Gi') }}
+  {% if storage_class %}
+  storageClassName: {{ storage_class }}
+  {% endif %}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance_id }}-etc
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ config_storage_size | default('1Gi') }}
+  {% if storage_class %}
+  storageClassName: {{ storage_class }}
+  {% endif %}
+
+---
+# Splunk Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance_id }}-splunk
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: splunk
+  annotations:
+    faux-splunk-cloud/topology: standalone
+    faux-splunk-cloud/experience: {{ experience }}
+    faux-splunk-cloud/expires-at: "{{ expires_at }}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: faux-splunk-cloud
+      app.kubernetes.io/instance: {{ instance_id }}
+      app.kubernetes.io/component: splunk
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: faux-splunk-cloud
+        app.kubernetes.io/instance: {{ instance_id }}
+        app.kubernetes.io/component: splunk
+    spec:
+      containers:
+        - name: splunk
+          image: {{ splunk_image }}
+          ports:
+            - name: web
+              containerPort: 8000
+              protocol: TCP
+            - name: api
+              containerPort: 8089
+              protocol: TCP
+            - name: hec
+              containerPort: 8088
+              protocol: TCP
+            - name: s2s
+              containerPort: 9997
+              protocol: TCP
+          env:
+            - name: SPLUNK_START_ARGS
+              value: "--accept-license"
+            - name: SPLUNK_LICENSE_URI
+              value: "Free"
+            # Configuration via default.yml (CI/CD pattern)
+            - name: SPLUNK_DEFAULTS_URL
+              value: "/tmp/defaults/default.yml"
+          volumeMounts:
+            - name: splunk-var
+              mountPath: /opt/splunk/var
+            - name: splunk-etc
+              mountPath: /opt/splunk/etc
+            - name: defaults
+              mountPath: /tmp/defaults
+              readOnly: true
+          resources:
+            requests:
+              memory: "{{ memory_request | default('2Gi') }}"
+              cpu: "{{ cpu_request | default('1') }}"
+            limits:
+              memory: "{{ memory_limit | default('4Gi') }}"
+              cpu: "{{ cpu_limit | default('2') }}"
+          livenessProbe:
+            httpGet:
+              path: /services/server/health/splunkd
+              port: 8089
+              scheme: HTTPS
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /services/server/health/splunkd
+              port: 8089
+              scheme: HTTPS
+            initialDelaySeconds: 180
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: splunk-var
+          persistentVolumeClaim:
+            claimName: {{ instance_id }}-var
+        - name: splunk-etc
+          persistentVolumeClaim:
+            claimName: {{ instance_id }}-etc
+        - name: defaults
+          configMap:
+            name: {{ instance_id }}-defaults
+      {% if node_selector %}
+      nodeSelector:
+        {{ node_selector | to_yaml | indent(8) }}
+      {% endif %}
+      {% if tolerations %}
+      tolerations:
+        {{ tolerations | to_yaml | indent(8) }}
+      {% endif %}
+
+---
+# Service for Splunk Web UI
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance_id }}-web
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ service_type | default('ClusterIP') }}
+  ports:
+    - name: web
+      port: 8000
+      targetPort: web
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: splunk
+
+---
+# Service for Splunkd API
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance_id }}-api
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ service_type | default('ClusterIP') }}
+  ports:
+    - name: api
+      port: 8089
+      targetPort: api
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: splunk
+
+---
+# Service for HEC
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance_id }}-hec
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: hec
+spec:
+  type: {{ service_type | default('ClusterIP') }}
+  ports:
+    - name: hec
+      port: 8088
+      targetPort: hec
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: splunk
+
+---
+# Service for S2S forwarding
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance_id }}-s2s
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: s2s
+spec:
+  type: {{ service_type | default('ClusterIP') }}
+  ports:
+    - name: s2s
+      port: 9997
+      targetPort: s2s
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+    app.kubernetes.io/component: splunk
+
+{% if ingress_enabled %}
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance_id }}-ingress
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: faux-splunk-cloud
+    app.kubernetes.io/instance: {{ instance_id }}
+  {% if ingress_annotations %}
+  annotations:
+    {{ ingress_annotations | to_yaml | indent(4) }}
+  {% endif %}
+spec:
+  {% if ingress_class %}
+  ingressClassName: {{ ingress_class }}
+  {% endif %}
+  rules:
+    - host: {{ instance_id }}.{{ ingress_domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance_id }}-web
+                port:
+                  number: 8000
+  {% if ingress_tls %}
+  tls:
+    - hosts:
+        - {{ instance_id }}.{{ ingress_domain }}
+      secretName: {{ ingress_tls_secret | default(instance_id + '-tls') }}
+  {% endif %}
+{% endif %}

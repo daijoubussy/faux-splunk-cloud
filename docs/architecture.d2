@@ -1,0 +1,206 @@
+# Faux Splunk Cloud Architecture Diagram
+# Generated using D2 (https://d2lang.com/)
+#
+# Render with: d2 architecture.d2 architecture.svg
+
+direction: right
+
+title: Faux Splunk Cloud Architecture {
+  near: top-center
+  shape: text
+  style.font-size: 24
+  style.bold: true
+}
+
+# ============================================================================
+# External Systems
+# ============================================================================
+
+developer: Developer {
+  icon: https://icons.terrastruct.com/essentials%2F359-user.svg
+}
+
+backstage: Spotify Backstage {
+  icon: https://icons.terrastruct.com/azure%2FGeneral%20Service%20Icons%2FTemplates.svg
+  style.fill: "#36BAA2"
+
+  catalog: Software Catalog
+  scaffolder: Scaffolder
+  templates: Templates
+}
+
+ci: CI/CD Systems {
+  icon: https://icons.terrastruct.com/dev%2Ftravis.svg
+  style.fill: "#E4A649"
+
+  concourse: Concourse CI
+  github_actions: GitHub Actions
+  terraform: Terraform
+  ansible: Ansible
+}
+
+# ============================================================================
+# Faux Splunk Cloud Core
+# ============================================================================
+
+fsc: Faux Splunk Cloud {
+  style.fill: "#4B8BBE"
+  style.stroke: "#306998"
+
+  api: API Server {
+    icon: https://icons.terrastruct.com/aws%2FCompute%2FAmazon-API-Gateway.svg
+
+    instance_api: Instance Management API {
+      shape: rectangle
+      style.fill: "#5CA3D9"
+    }
+
+    acs_api: ACS API Simulation {
+      shape: rectangle
+      style.fill: "#5CA3D9"
+    }
+  }
+
+  cli: CLI Tool {
+    icon: https://icons.terrastruct.com/essentials%2F144-terminal.svg
+    shape: rectangle
+  }
+
+  services: Core Services {
+    instance_manager: Instance Manager
+    docker_orchestrator: Docker Orchestrator
+    splunk_client: Splunk SDK Client
+    auth_service: Auth Service (JWT)
+  }
+
+  templates: Configuration Templates {
+    defaults_yml: default.yml Templates
+    compose: Docker Compose Templates
+    kubernetes: Kubernetes Manifests
+  }
+}
+
+# ============================================================================
+# Infrastructure Services
+# ============================================================================
+
+infra: Infrastructure Services {
+  style.fill: "#8B5CF6"
+
+  vault: HashiCorp Vault {
+    icon: https://icons.terrastruct.com/aws%2FSecurity%2C%20Identity%2C%20%26%20Compliance%2FAWS-Secrets-Manager.svg
+    shape: cylinder
+  }
+
+  traefik: Traefik {
+    icon: https://icons.terrastruct.com/gcp%2FProducts%20and%20services%2FNetworking%2FCloud%20Load%20Balancing.svg
+  }
+
+  step_ca: Step CA {
+    icon: https://icons.terrastruct.com/aws%2FSecurity%2C%20Identity%2C%20%26%20Compliance%2FAWS-Certificate-Manager.svg
+  }
+
+  registry: Container Registry {
+    icon: https://icons.terrastruct.com/aws%2FCompute%2FAmazon-Elastic-Container-Registry.svg
+    shape: cylinder
+  }
+}
+
+# ============================================================================
+# Ephemeral Splunk Instances
+# ============================================================================
+
+instances: Ephemeral Splunk Instances {
+  style.fill: "#F97316"
+
+  standalone: Standalone Instance {
+    splunk: Splunk Enterprise {
+      web: Web UI (8000)
+      api: REST API (8089)
+      hec: HEC (8088)
+    }
+  }
+
+  distributed: Distributed Instance {
+    search_head: Search Head {
+      web: Web UI
+      api: REST API
+    }
+    indexer: Indexer {
+      hec: HEC
+      s2s: S2S (9997)
+    }
+  }
+
+  victoria_full: Victoria Full {
+    shc: Search Head Cluster {
+      sh1: SH 1
+      sh2: SH 2
+      sh3: SH 3
+      deployer: Deployer
+    }
+    idx_cluster: Indexer Cluster {
+      idx1: IDX 1
+      idx2: IDX 2
+      idx3: IDX 3
+      cm: Cluster Manager
+    }
+  }
+}
+
+# ============================================================================
+# Data Stores
+# ============================================================================
+
+storage: Storage {
+  style.fill: "#6B7280"
+
+  state_db: Instance State {
+    shape: cylinder
+    style.fill: "#9CA3AF"
+  }
+
+  volumes: Docker Volumes {
+    shape: cylinder
+    style.fill: "#9CA3AF"
+  }
+}
+
+# ============================================================================
+# Connections
+# ============================================================================
+
+# Developer interactions
+developer -> backstage.scaffolder: "Create Instance"
+developer -> fsc.cli: "CLI Commands"
+developer -> instances: "Use Splunk"
+
+# Backstage connections
+backstage.scaffolder -> fsc.api.instance_api: "REST API"
+backstage.catalog -> fsc.api: "Register Component"
+
+# CI/CD connections
+ci.concourse -> fsc.api.instance_api: "Provision/Destroy"
+ci.terraform -> fsc.api.acs_api: "IaC Operations"
+ci.ansible -> fsc.api.instance_api: "Playbooks"
+
+# Internal FSC connections
+fsc.api.instance_api -> fsc.services.instance_manager
+fsc.api.acs_api -> fsc.services.splunk_client
+fsc.cli -> fsc.services.instance_manager
+
+fsc.services.instance_manager -> fsc.services.docker_orchestrator
+fsc.services.instance_manager -> fsc.templates.defaults_yml
+fsc.services.docker_orchestrator -> fsc.templates.compose
+fsc.services.splunk_client -> instances: "Splunk SDK"
+
+# Infrastructure connections
+fsc.services.auth_service -> infra.vault: "Secrets"
+fsc.services.docker_orchestrator -> infra.registry: "Pull Images"
+infra.traefik -> instances: "Reverse Proxy"
+infra.step_ca -> instances: "TLS Certs"
+
+# Storage connections
+fsc.services.instance_manager -> storage.state_db
+fsc.services.docker_orchestrator -> storage.volumes
+instances -> storage.volumes

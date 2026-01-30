@@ -1,0 +1,245 @@
+# Faux Splunk Cloud - Victoria Full Topology
+# Production-like Victoria Experience with clustered components.
+#
+# Architecture Components:
+# - Search Head Cluster (SHC) with deployer
+# - Indexer Cluster with Cluster Manager
+# - HEC endpoints with load balancing
+#
+# This topology closely mimics Splunk Cloud Victoria Experience:
+# - Apps installed on all search heads automatically
+# - Real-time search enabled by default
+# - No IDM required (Victoria feature)
+#
+# Reference: Splunk Validated Architectures - Distributed Clustered (C1/C11)
+# https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
+
+version: "3.8"
+
+networks:
+  {{ network_name }}:
+    driver: bridge
+    name: {{ network_name }}
+
+volumes:
+  # Cluster Manager volumes
+  cm_var:
+    name: {{ instance_id }}_cm_var
+  cm_etc:
+    name: {{ instance_id }}_cm_etc
+
+  # Deployer volumes (for SHC)
+  deployer_var:
+    name: {{ instance_id }}_deployer_var
+  deployer_etc:
+    name: {{ instance_id }}_deployer_etc
+
+  # Search Head volumes
+  {% for i in range(search_head_count) %}
+  sh{{ i + 1 }}_var:
+    name: {{ instance_id }}_sh{{ i + 1 }}_var
+  sh{{ i + 1 }}_etc:
+    name: {{ instance_id }}_sh{{ i + 1 }}_etc
+  {% endfor %}
+
+  # Indexer volumes
+  {% for i in range(indexer_count) %}
+  idx{{ i + 1 }}_var:
+    name: {{ instance_id }}_idx{{ i + 1 }}_var
+  idx{{ i + 1 }}_etc:
+    name: {{ instance_id }}_idx{{ i + 1 }}_etc
+  {% endfor %}
+
+services:
+  # =========================================================================
+  # Cluster Manager (formerly Cluster Master)
+  # Coordinates the indexer cluster, manages bucket replication
+  # =========================================================================
+  cluster-manager:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_cm
+    hostname: cluster-manager
+    networks:
+      - {{ network_name }}
+    ports:
+      - "{{ cm_port }}:8089"
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "{{ admin_password }}"
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_ROLE: "splunk_cluster_master"
+      SPLUNK_CLUSTER_MASTER_URL: "cluster-manager"
+      SPLUNK_REPLICATION_FACTOR: "{{ replication_factor }}"
+      SPLUNK_SEARCH_FACTOR: "{{ search_factor }}"
+      SPLUNK_INDEXER_URL: "{% for i in range(indexer_count) %}indexer-{{ i + 1 }}{% if not loop.last %},{% endif %}{% endfor %}"
+    volumes:
+      - cm_var:/opt/splunk/var
+      - cm_etc:/opt/splunk/etc
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.role: "cluster_manager"
+      com.faux-splunk-cloud.topology: "victoria_full"
+      com.faux-splunk-cloud.experience: "{{ experience }}"
+
+  # =========================================================================
+  # Deployer (for Search Head Cluster)
+  # Distributes apps and configurations to SHC members
+  # =========================================================================
+  deployer:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_deployer
+    hostname: deployer
+    networks:
+      - {{ network_name }}
+    ports:
+      - "{{ deployer_port }}:8089"
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "{{ admin_password }}"
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_ROLE: "splunk_deployer"
+    volumes:
+      - deployer_var:/opt/splunk/var
+      - deployer_etc:/opt/splunk/etc
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.role: "deployer"
+      com.faux-splunk-cloud.topology: "victoria_full"
+      com.faux-splunk-cloud.experience: "{{ experience }}"
+
+  # =========================================================================
+  # Indexer Cluster Members
+  # Handle data ingestion, indexing, and replication
+  # =========================================================================
+  {% for i in range(indexer_count) %}
+  indexer-{{ i + 1 }}:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_idx{{ i + 1 }}
+    hostname: indexer-{{ i + 1 }}
+    networks:
+      - {{ network_name }}
+    ports:
+      # HEC endpoint (first indexer is primary)
+      {% if i == 0 %}
+      - "{{ hec_port }}:8088"
+      {% else %}
+      - "{{ hec_port + i }}:8088"
+      {% endif %}
+      # S2S receiving
+      - "{{ s2s_port + i }}:9997"
+      # Management API
+      - "{{ idx_api_port + i }}:8089"
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "{{ admin_password }}"
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_ROLE: "splunk_indexer"
+      SPLUNK_CLUSTER_MASTER_URL: "cluster-manager"
+      SPLUNK_ENABLE_LISTEN: "9997"
+    volumes:
+      - idx{{ i + 1 }}_var:/opt/splunk/var
+      - idx{{ i + 1 }}_etc:/opt/splunk/etc
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    depends_on:
+      cluster-manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.role: "indexer"
+      com.faux-splunk-cloud.indexer-number: "{{ i + 1 }}"
+      com.faux-splunk-cloud.topology: "victoria_full"
+      com.faux-splunk-cloud.experience: "{{ experience }}"
+
+  {% endfor %}
+
+  # =========================================================================
+  # Search Head Cluster Members
+  # Victoria Experience: apps automatically installed on all SH members
+  # =========================================================================
+  {% for i in range(search_head_count) %}
+  search-head-{{ i + 1 }}:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_sh{{ i + 1 }}
+    hostname: search-head-{{ i + 1 }}
+    networks:
+      - {{ network_name }}
+    ports:
+      # Splunk Web (first SH is primary)
+      {% if i == 0 %}
+      - "{{ web_port }}:8000"
+      - "{{ api_port }}:8089"
+      {% else %}
+      - "{{ web_port + i }}:8000"
+      - "{{ api_port + i }}:8089"
+      {% endif %}
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: "{{ admin_password }}"
+      SPLUNK_LICENSE_URI: "Free"
+      SPLUNK_ROLE: "splunk_search_head"
+      SPLUNK_SEARCH_HEAD_CAPTAIN_URL: "search-head-1"
+      SPLUNK_SEARCH_HEAD_URL: "{% for j in range(search_head_count) %}search-head-{{ j + 1 }}{% if not loop.last %},{% endif %}{% endfor %}"
+      SPLUNK_DEPLOYER_URL: "deployer"
+      SPLUNK_CLUSTER_MASTER_URL: "cluster-manager"
+      SPLUNK_INDEXER_URL: "{% for j in range(indexer_count) %}indexer-{{ j + 1 }}{% if not loop.last %},{% endif %}{% endfor %}"
+    volumes:
+      - sh{{ i + 1 }}_var:/opt/splunk/var
+      - sh{{ i + 1 }}_etc:/opt/splunk/etc
+      {% if custom_configs_path %}
+      - {{ custom_configs_path }}:/opt/splunk/etc/apps/faux_splunk_config:ro
+      {% endif %}
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    depends_on:
+      deployer:
+        condition: service_healthy
+      cluster-manager:
+        condition: service_healthy
+      {% for j in range(indexer_count) %}
+      indexer-{{ j + 1 }}:
+        condition: service_healthy
+      {% endfor %}
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.role: "search_head"
+      com.faux-splunk-cloud.search-head-number: "{{ i + 1 }}"
+      com.faux-splunk-cloud.topology: "victoria_full"
+      com.faux-splunk-cloud.experience: "{{ experience }}"
+      {% if i == 0 %}
+      com.faux-splunk-cloud.shc-captain: "true"
+      {% endif %}
+
+  {% endfor %}

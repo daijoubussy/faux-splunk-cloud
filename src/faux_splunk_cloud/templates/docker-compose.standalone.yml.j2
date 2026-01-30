@@ -1,0 +1,63 @@
+# Faux Splunk Cloud - Standalone Topology
+# This is the simplest topology for basic testing.
+# Uses default.yml for configuration per Splunk docker project best practices.
+#
+# Reference: Splunk Validated Architectures - Single Server
+# https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
+# https://splunk.github.io/docker-splunk/ADVANCED.html
+
+version: "3.8"
+
+networks:
+  {{ network_name }}:
+    driver: bridge
+    name: {{ network_name }}
+
+volumes:
+  splunk_var:
+    name: {{ instance_id }}_splunk_var
+  splunk_etc:
+    name: {{ instance_id }}_splunk_etc
+
+services:
+  splunk:
+    image: {{ splunk_image }}
+    container_name: {{ instance_id }}_splunk
+    hostname: {{ instance_id }}-splunk
+    networks:
+      - {{ network_name }}
+    ports:
+      # Splunk Web
+      - "{{ web_port }}:8000"
+      # Splunkd REST API
+      - "{{ api_port }}:8089"
+      # HEC
+      - "{{ hec_port }}:8088"
+      # S2S receiving
+      - "{{ s2s_port }}:9997"
+    environment:
+      # Minimal environment variables - configuration via default.yml
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_LICENSE_URI: "Free"
+      # Point to default.yml for all configuration
+      SPLUNK_DEFAULTS_URL: "/tmp/defaults/default.yml"
+    volumes:
+      - splunk_var:/opt/splunk/var
+      - splunk_etc:/opt/splunk/etc
+      # Mount default.yml configuration (parameterized CI/CD pattern)
+      - {{ defaults_path }}:/tmp/defaults:ro
+    mem_limit: {{ memory_limit }}m
+    cpus: {{ cpu_limit }}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8089/services/server/health/splunkd"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+    labels:
+      com.faux-splunk-cloud.instance-id: "{{ instance_id }}"
+      com.faux-splunk-cloud.topology: "standalone"
+      com.faux-splunk-cloud.experience: "{{ experience }}"
+      com.faux-splunk-cloud.created-at: "{{ created_at }}"
+      com.faux-splunk-cloud.expires-at: "{{ expires_at }}"

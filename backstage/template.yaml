@@ -1,0 +1,272 @@
+# Backstage Software Template for Ephemeral Splunk Instances
+# This template allows developers to provision on-demand Splunk Cloud Victoria environments
+#
+# Reference: https://backstage.io/docs/features/software-templates/
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: faux-splunk-instance
+  title: Ephemeral Splunk Cloud Instance
+  description: |
+    Provision an ephemeral Splunk Cloud Victoria instance for development and testing.
+    Instances are pre-configured with ACS API, HEC endpoints, and default indexes.
+  tags:
+    - splunk
+    - splunk-cloud
+    - victoria
+    - ephemeral
+    - testing
+spec:
+  owner: platform-team
+  type: environment
+
+  parameters:
+    - title: Instance Configuration
+      required:
+        - instanceName
+      properties:
+        instanceName:
+          title: Instance Name
+          type: string
+          description: A unique name for your Splunk instance (lowercase, alphanumeric, hyphens)
+          pattern: "^[a-z][a-z0-9-]*[a-z0-9]$"
+          minLength: 3
+          maxLength: 63
+          ui:autofocus: true
+          ui:help: "Example: my-test-splunk"
+
+        topology:
+          title: Topology
+          type: string
+          description: Deployment topology pattern
+          default: standalone
+          enum:
+            - standalone
+            - distributed_minimal
+            - distributed_clustered
+            - victoria_full
+          enumNames:
+            - Standalone (Quick, minimal resources)
+            - Distributed Minimal (Search Head + Indexer)
+            - Distributed Clustered (SHC + Indexer Cluster)
+            - Victoria Full (Production-like)
+
+        ttlHours:
+          title: Time to Live (Hours)
+          type: integer
+          description: How long the instance should remain active
+          default: 24
+          minimum: 1
+          maximum: 168
+          ui:help: "Maximum 168 hours (1 week)"
+
+    - title: Victoria Experience Options
+      properties:
+        enableHec:
+          title: Enable HTTP Event Collector
+          type: boolean
+          default: true
+          description: Enable HEC for sending events to Splunk
+
+        enableRealtimeSearch:
+          title: Enable Real-time Search
+          type: boolean
+          default: true
+          description: Victoria Experience enables real-time search by default
+
+        createDefaultIndexes:
+          title: Create Default Indexes
+          type: boolean
+          default: true
+          description: Create standard indexes (main, summary, etc.)
+
+    - title: Resource Configuration
+      properties:
+        memoryMb:
+          title: Memory (MB)
+          type: integer
+          default: 2048
+          minimum: 512
+          maximum: 8192
+          description: Memory allocation per container
+
+        cpuCores:
+          title: CPU Cores
+          type: number
+          default: 1.0
+          minimum: 0.5
+          maximum: 4.0
+          description: CPU cores per container
+
+    - title: Attack Simulation
+      description: Configure simulated attacks for security training
+      properties:
+        enableAttackSimulation:
+          title: Enable Attack Simulation
+          type: boolean
+          default: false
+          description: |
+            Enable adversarial attack simulation against this instance.
+            Attacks will generate realistic security logs for detection testing.
+
+        threatActorProfile:
+          title: Threat Actor Profile
+          type: string
+          description: Type of adversary to simulate
+          default: script_kiddie_generic
+          enum:
+            - script_kiddie_generic
+            - opportunistic_ransomware
+            - organized_crime_fin
+            - hacktivist_group
+            - insider_malicious
+            - apt_generic
+            - apt29
+            - apt28
+            - lazarus
+            - apt41
+          enumNames:
+            - Script Kiddie (Low skill, noisy)
+            - Ransomware Operator (Financial motivation)
+            - Organized Crime (Financial theft)
+            - Hacktivist (Ideological, data exposure)
+            - Malicious Insider (Privileged access abuse)
+            - Generic APT (Espionage focused)
+            - "APT29 / Cozy Bear (Russia/SVR - SolarWinds)"
+            - "APT28 / Fancy Bear (Russia/GRU)"
+            - "Lazarus Group (North Korea - WannaCry)"
+            - "APT41 / Double Dragon (China)"
+          ui:widget: select
+
+        attackScenario:
+          title: Attack Scenario
+          type: string
+          description: Predefined attack scenario (BOTS-style)
+          default: apt_intrusion
+          enum:
+            - apt_intrusion
+            - ransomware_attack
+            - insider_threat
+            - web_app_attack
+            - credential_theft
+          enumNames:
+            - APT Intrusion (Spearphishing → Lateral Movement → Exfil)
+            - Ransomware Attack (RDP Brute Force → Encryption)
+            - Insider Threat (Data Theft → Cloud Exfil)
+            - Web Application Attack (SQLi, XSS, Recon)
+            - Credential Theft (Kerberoasting, Pass-the-Hash)
+
+        attackSpeed:
+          title: Attack Speed Multiplier
+          type: number
+          default: 60
+          minimum: 1
+          maximum: 3600
+          description: |
+            How fast attacks execute (60 = 1 minute simulates 1 hour of dwell time)
+
+        generateBackgroundNoise:
+          title: Generate Background Noise
+          type: boolean
+          default: true
+          description: |
+            Generate normal/benign log traffic to make detection more realistic
+
+    - title: Labels
+      properties:
+        team:
+          title: Team
+          type: string
+          description: Team name for resource tracking
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+
+        environment:
+          title: Environment
+          type: string
+          description: Environment label
+          default: development
+          enum:
+            - development
+            - testing
+            - staging
+
+  steps:
+    - id: createInstance
+      name: Create Splunk Instance
+      action: http:backstage:request
+      input:
+        method: POST
+        path: /api/proxy/faux-splunk-cloud/instances
+        headers:
+          Content-Type: application/json
+        body:
+          name: ${{ parameters.instanceName }}
+          config:
+            topology: ${{ parameters.topology }}
+            enable_hec: ${{ parameters.enableHec }}
+            enable_realtime_search: ${{ parameters.enableRealtimeSearch }}
+            create_default_indexes: ${{ parameters.createDefaultIndexes }}
+            memory_mb: ${{ parameters.memoryMb }}
+            cpu_cores: ${{ parameters.cpuCores }}
+          ttl_hours: ${{ parameters.ttlHours }}
+          labels:
+            team: ${{ parameters.team }}
+            environment: ${{ parameters.environment }}
+            created_by: backstage
+
+    - id: waitForReady
+      name: Wait for Instance Ready
+      action: http:backstage:request
+      input:
+        method: GET
+        path: /api/proxy/faux-splunk-cloud/instances/${{ steps.createInstance.output.body.id }}/wait
+        headers:
+          Accept: application/json
+
+    - id: startAttackSimulation
+      name: Start Attack Simulation
+      if: ${{ parameters.enableAttackSimulation }}
+      action: http:backstage:request
+      input:
+        method: POST
+        path: /api/proxy/faux-splunk-cloud/attacks/campaigns
+        headers:
+          Content-Type: application/json
+        body:
+          threat_actor_id: ${{ parameters.threatActorProfile }}
+          target_instance_id: ${{ steps.createInstance.output.body.id }}
+          name: "Backstage-provisioned attack: ${{ parameters.attackScenario }}"
+          speed_multiplier: ${{ parameters.attackSpeed }}
+          start_immediately: true
+          objectives:
+            - establish_persistence
+            - harvest_credentials
+            - lateral_movement
+            - data_exfiltration
+
+  output:
+    links:
+      - title: Splunk Web UI
+        url: ${{ steps.waitForReady.output.body.endpoints.web_url }}
+        icon: dashboard
+      - title: Splunk REST API
+        url: ${{ steps.waitForReady.output.body.endpoints.api_url }}
+        icon: code
+      - title: HEC Endpoint
+        url: ${{ steps.waitForReady.output.body.endpoints.hec_url }}
+        icon: send
+      - title: ACS API
+        url: ${{ steps.waitForReady.output.body.endpoints.acs_url }}
+        icon: settings
+    text:
+      - title: Instance ID
+        content: ${{ steps.createInstance.output.body.id }}
+      - title: Admin Password
+        content: ${{ steps.waitForReady.output.body.credentials.admin_password }}
+      - title: HEC Token
+        content: ${{ steps.waitForReady.output.body.credentials.hec_token }}
+      - title: Expires At
+        content: ${{ steps.waitForReady.output.body.expires_at }}
