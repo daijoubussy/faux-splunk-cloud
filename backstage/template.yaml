@@ -98,6 +98,80 @@ spec:
           maximum: 4.0
           description: CPU cores per container
 
+    - title: Attack Simulation
+      description: Configure simulated attacks for security training
+      properties:
+        enableAttackSimulation:
+          title: Enable Attack Simulation
+          type: boolean
+          default: false
+          description: |
+            Enable adversarial attack simulation against this instance.
+            Attacks will generate realistic security logs for detection testing.
+
+        threatActorProfile:
+          title: Threat Actor Profile
+          type: string
+          description: Type of adversary to simulate
+          default: script_kiddie_generic
+          enum:
+            - script_kiddie_generic
+            - opportunistic_ransomware
+            - organized_crime_fin
+            - hacktivist_group
+            - insider_malicious
+            - apt_generic
+            - apt29
+            - apt28
+            - lazarus
+            - apt41
+          enumNames:
+            - Script Kiddie (Low skill, noisy)
+            - Ransomware Operator (Financial motivation)
+            - Organized Crime (Financial theft)
+            - Hacktivist (Ideological, data exposure)
+            - Malicious Insider (Privileged access abuse)
+            - Generic APT (Espionage focused)
+            - "APT29 / Cozy Bear (Russia/SVR - SolarWinds)"
+            - "APT28 / Fancy Bear (Russia/GRU)"
+            - "Lazarus Group (North Korea - WannaCry)"
+            - "APT41 / Double Dragon (China)"
+          ui:widget: select
+
+        attackScenario:
+          title: Attack Scenario
+          type: string
+          description: Predefined attack scenario (BOTS-style)
+          default: apt_intrusion
+          enum:
+            - apt_intrusion
+            - ransomware_attack
+            - insider_threat
+            - web_app_attack
+            - credential_theft
+          enumNames:
+            - APT Intrusion (Spearphishing → Lateral Movement → Exfil)
+            - Ransomware Attack (RDP Brute Force → Encryption)
+            - Insider Threat (Data Theft → Cloud Exfil)
+            - Web Application Attack (SQLi, XSS, Recon)
+            - Credential Theft (Kerberoasting, Pass-the-Hash)
+
+        attackSpeed:
+          title: Attack Speed Multiplier
+          type: number
+          default: 60
+          minimum: 1
+          maximum: 3600
+          description: |
+            How fast attacks execute (60 = 1 minute simulates 1 hour of dwell time)
+
+        generateBackgroundNoise:
+          title: Generate Background Noise
+          type: boolean
+          default: true
+          description: |
+            Generate normal/benign log traffic to make detection more realistic
+
     - title: Labels
       properties:
         team:
@@ -151,6 +225,27 @@ spec:
         path: /api/proxy/faux-splunk-cloud/instances/${{ steps.createInstance.output.body.id }}/wait
         headers:
           Accept: application/json
+
+    - id: startAttackSimulation
+      name: Start Attack Simulation
+      if: ${{ parameters.enableAttackSimulation }}
+      action: http:backstage:request
+      input:
+        method: POST
+        path: /api/proxy/faux-splunk-cloud/attacks/campaigns
+        headers:
+          Content-Type: application/json
+        body:
+          threat_actor_id: ${{ parameters.threatActorProfile }}
+          target_instance_id: ${{ steps.createInstance.output.body.id }}
+          name: "Backstage-provisioned attack: ${{ parameters.attackScenario }}"
+          speed_multiplier: ${{ parameters.attackSpeed }}
+          start_immediately: true
+          objectives:
+            - establish_persistence
+            - harvest_credentials
+            - lateral_movement
+            - data_exfiltration
 
   output:
     links:

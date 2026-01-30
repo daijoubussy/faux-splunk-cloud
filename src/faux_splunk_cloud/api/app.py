@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from faux_splunk_cloud.api.routes import acs, health, instances
+from faux_splunk_cloud.api.routes import acs, attacks, health, instances
 from faux_splunk_cloud.config import settings
 from faux_splunk_cloud.services.instance_manager import instance_manager
 
@@ -50,6 +50,7 @@ Ephemeral Splunk Cloud Victoria instances for development and testing.
 - **ACS API Compatible**: Full compatibility with Splunk Terraform Provider and SDK
 - **HEC Support**: HTTP Event Collector endpoints for data ingestion
 - **Backstage Integration**: Software templates for developer self-service
+- **Attack Simulation**: Adversarial attack simulation for security training
 
 ## API Surfaces
 
@@ -59,6 +60,10 @@ Create, manage, and destroy ephemeral Splunk instances.
 ### ACS API Simulation (`/{stack}/adminconfig/v2`)
 Compatible with Splunk Cloud Admin Config Service API.
 Supports index, HEC token, and app management.
+
+### Attack Simulation (`/api/v1/attacks`)
+Simulate adversarial attacks from script kiddies to nation-state APTs.
+Generate realistic security logs based on MITRE ATT&CK techniques.
 
 ## References
 
@@ -93,6 +98,11 @@ Supports index, HEC token, and app management.
         acs.router,
         prefix="/{stack}/adminconfig/v2",
         tags=["ACS API"],
+    )
+    app.include_router(
+        attacks.router,
+        prefix="/api/v1/attacks",
+        tags=["Attack Simulation"],
     )
 
     # Exception handlers
