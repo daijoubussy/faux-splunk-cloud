@@ -1,0 +1,271 @@
+# Concourse CI Pipeline for Faux Splunk Cloud
+# Automates ephemeral instance provisioning and testing
+#
+# This pipeline demonstrates CI/CD-driven Splunk instance deployment
+# using the parameterized default.yml approach
+
+---
+resource_types:
+  - name: faux-splunk-cloud
+    type: docker-image
+    source:
+      repository: ghcr.io/daijoubussy/faux-splunk-cloud-resource
+
+resources:
+  # Git repository
+  - name: repo
+    type: git
+    icon: github
+    source:
+      uri: https://github.com/daijoubussy/faux-splunk-cloud.git
+      branch: main
+
+  # Faux Splunk Cloud instance resource
+  - name: splunk-instance
+    type: faux-splunk-cloud
+    icon: database
+    source:
+      api_url: ((fsc_api_url))
+      api_token: ((fsc_api_token))
+
+  # Vault for secrets
+  - name: vault
+    type: vault
+    source:
+      url: ((vault_url))
+      token: ((vault_token))
+      path: secret/faux-splunk-cloud
+
+jobs:
+  # =========================================================================
+  # Provision Test Environment
+  # =========================================================================
+  - name: provision-splunk
+    plan:
+      - get: repo
+        trigger: true
+
+      - get: vault
+        params:
+          paths:
+            - secret/faux-splunk-cloud/admin-password
+            - secret/faux-splunk-cloud/hec-token
+
+      # Create ephemeral Splunk instance
+      - put: splunk-instance
+        params:
+          name: ci-test-((BUILD_ID))
+          topology: standalone
+          config:
+            experience: victoria
+            enable_hec: true
+            enable_realtime_search: true
+            memory_mb: 2048
+            cpu_cores: 1
+          ttl_hours: 4
+          labels:
+            environment: ci
+            pipeline: faux-splunk-cloud
+            build_id: ((BUILD_ID))
+
+      # Wait for instance to be ready
+      - task: wait-for-ready
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: curlimages/curl
+          inputs:
+            - name: splunk-instance
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                INSTANCE_ID=$(cat splunk-instance/id)
+                API_URL=$(cat splunk-instance/api_url)
+
+                echo "Waiting for Splunk instance $INSTANCE_ID to be ready..."
+
+                for i in $(seq 1 60); do
+                  if curl -k -s "$API_URL/services/server/health/splunkd" | grep -q "healthy"; then
+                    echo "Instance is ready!"
+                    exit 0
+                  fi
+                  echo "Attempt $i: Not ready yet..."
+                  sleep 10
+                done
+
+                echo "Timeout waiting for instance"
+                exit 1
+
+  # =========================================================================
+  # Run Integration Tests
+  # =========================================================================
+  - name: test-splunk-sdk
+    plan:
+      - get: repo
+        passed: [provision-splunk]
+        trigger: true
+
+      - get: splunk-instance
+        passed: [provision-splunk]
+
+      # Test Splunk SDK connectivity
+      - task: test-sdk
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: python
+              tag: "3.11-slim"
+          inputs:
+            - name: repo
+            - name: splunk-instance
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                pip install splunk-sdk
+
+                python <<EOF
+                import splunklib.client as client
+
+                # Read instance details
+                with open('splunk-instance/api_url', 'r') as f:
+                    api_url = f.read().strip()
+                with open('splunk-instance/admin_password', 'r') as f:
+                    password = f.read().strip()
+
+                # Parse host and port
+                import urllib.parse
+                parsed = urllib.parse.urlparse(api_url)
+
+                # Connect using Splunk SDK
+                service = client.connect(
+                    host=parsed.hostname,
+                    port=parsed.port or 8089,
+                    username='admin',
+                    password=password
+                )
+
+                # Verify connection
+                info = service.info
+                print(f"Connected to Splunk {info['version']}")
+                print(f"Server name: {info['serverName']}")
+
+                # List indexes
+                print("\\nIndexes:")
+                for index in service.indexes:
+                    print(f"  - {index.name}")
+
+                print("\\nSplunk SDK test passed!")
+                EOF
+
+  # =========================================================================
+  # Test ACS API Compatibility
+  # =========================================================================
+  - name: test-acs-api
+    plan:
+      - get: repo
+        passed: [provision-splunk]
+        trigger: true
+
+      - get: splunk-instance
+        passed: [provision-splunk]
+
+      - task: test-acs-endpoints
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: curlimages/curl
+          inputs:
+            - name: splunk-instance
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                INSTANCE_ID=$(cat splunk-instance/id)
+                ACS_URL=$(cat splunk-instance/acs_url)
+                ACS_TOKEN=$(cat splunk-instance/acs_token)
+
+                echo "Testing ACS API at $ACS_URL"
+
+                # Test list indexes endpoint
+                echo "\\n=== Testing GET /indexes ==="
+                curl -s -H "Authorization: Bearer $ACS_TOKEN" \
+                  "$ACS_URL/indexes" | jq .
+
+                # Test list HEC tokens endpoint
+                echo "\\n=== Testing GET /inputs/http-event-collectors ==="
+                curl -s -H "Authorization: Bearer $ACS_TOKEN" \
+                  "$ACS_URL/inputs/http-event-collectors" | jq .
+
+                # Test create index
+                echo "\\n=== Testing POST /indexes (create test-index) ==="
+                curl -s -X POST \
+                  -H "Authorization: Bearer $ACS_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d '{"name": "ci_test_index", "searchableDays": 30}' \
+                  "$ACS_URL/indexes" | jq .
+
+                echo "\\nACS API tests passed!"
+
+  # =========================================================================
+  # Test HEC Ingestion
+  # =========================================================================
+  - name: test-hec
+    plan:
+      - get: repo
+        passed: [provision-splunk]
+        trigger: true
+
+      - get: splunk-instance
+        passed: [provision-splunk]
+
+      - task: test-hec-ingestion
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source:
+              repository: curlimages/curl
+          inputs:
+            - name: splunk-instance
+          run:
+            path: sh
+            args:
+              - -c
+              - |
+                HEC_URL=$(cat splunk-instance/hec_url)
+                HEC_TOKEN=$(cat splunk-instance/hec_token)
+
+                echo "Testing HEC at $HEC_URL"
+
+                # Send test event
+                curl -k -X POST \
+                  -H "Authorization: Splunk $HEC_TOKEN" \
+                  -d '{"event": "CI test event", "sourcetype": "ci_test"}' \
+                  "$HEC_URL/services/collector/event"
+
+                echo "\\nHEC test passed!"
+
+  # =========================================================================
+  # Cleanup
+  # =========================================================================
+  - name: cleanup
+    plan:
+      - get: splunk-instance
+        passed: [test-splunk-sdk, test-acs-api, test-hec]
+        trigger: true
+
+      # Destroy the ephemeral instance
+      - put: splunk-instance
+        params:
+          action: destroy

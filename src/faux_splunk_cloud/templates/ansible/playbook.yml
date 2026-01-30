@@ -1,0 +1,246 @@
+# Ansible Playbook for Faux Splunk Cloud
+# Demonstrates infrastructure-as-code deployment using Ansible
+#
+# This playbook provisions and configures ephemeral Splunk instances
+# using the ACS-compatible API
+
+---
+- name: Provision Faux Splunk Cloud Instance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    fsc_api_url: "{{ lookup('env', 'FSC_API_URL') | default('http://localhost:8800', true) }}"
+    fsc_api_token: "{{ lookup('env', 'FSC_API_TOKEN') }}"
+    vault_addr: "{{ lookup('env', 'VAULT_ADDR') | default('http://localhost:8200', true) }}"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+
+    # Instance configuration
+    instance_name: "ansible-managed"
+    topology: "standalone"
+    experience: "victoria"
+    enable_hec: true
+    enable_realtime_search: true
+    memory_mb: 2048
+    cpu_cores: 1.0
+    ttl_hours: 24
+
+    # Additional indexes to create
+    additional_indexes:
+      - name: app_logs
+        datatype: event
+        searchable_days: 90
+      - name: app_metrics
+        datatype: metric
+        searchable_days: 30
+
+    # Additional HEC tokens
+    additional_hec_tokens:
+      - name: app-events
+        default_index: app_logs
+        indexes:
+          - app_logs
+          - main
+      - name: app-metrics
+        default_index: app_metrics
+        indexes:
+          - app_metrics
+
+  tasks:
+    # =========================================================================
+    # Create Instance
+    # =========================================================================
+    - name: Create Faux Splunk Cloud instance
+      uri:
+        url: "{{ fsc_api_url }}/api/v1/instances"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ fsc_api_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: "{{ instance_name }}"
+          config:
+            topology: "{{ topology }}"
+            experience: "{{ experience }}"
+            enable_hec: "{{ enable_hec }}"
+            enable_realtime_search: "{{ enable_realtime_search }}"
+            memory_mb: "{{ memory_mb }}"
+            cpu_cores: "{{ cpu_cores }}"
+          ttl_hours: "{{ ttl_hours }}"
+          labels:
+            managed_by: ansible
+            playbook: faux-splunk-cloud
+        status_code: [200, 201]
+      register: instance_result
+
+    - name: Set instance facts
+      set_fact:
+        instance_id: "{{ instance_result.json.id }}"
+        instance_endpoints: "{{ instance_result.json.endpoints }}"
+        instance_credentials: "{{ instance_result.json.credentials }}"
+
+    - name: Display instance info
+      debug:
+        msg: |
+          Instance created successfully!
+          ID: {{ instance_id }}
+          Web URL: {{ instance_endpoints.web_url }}
+          API URL: {{ instance_endpoints.api_url }}
+          HEC URL: {{ instance_endpoints.hec_url }}
+          ACS URL: {{ instance_endpoints.acs_url }}
+
+    # =========================================================================
+    # Start Instance
+    # =========================================================================
+    - name: Start the instance
+      uri:
+        url: "{{ fsc_api_url }}/api/v1/instances/{{ instance_id }}/start"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ fsc_api_token }}"
+        status_code: [200, 202]
+
+    # =========================================================================
+    # Wait for Ready
+    # =========================================================================
+    - name: Wait for instance to be ready
+      uri:
+        url: "{{ fsc_api_url }}/api/v1/instances/{{ instance_id }}/wait"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ fsc_api_token }}"
+        status_code: 200
+      register: ready_result
+      until: ready_result.json.status == 'running'
+      retries: 60
+      delay: 10
+
+    - name: Instance is ready
+      debug:
+        msg: "Instance {{ instance_id }} is now running!"
+
+    # =========================================================================
+    # Store Credentials in Vault
+    # =========================================================================
+    - name: Store credentials in Vault
+      community.hashi_vault.vault_kv2_write:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        path: "faux-splunk-cloud/{{ instance_name }}"
+        data:
+          admin_password: "{{ instance_credentials.admin_password }}"
+          hec_token: "{{ instance_credentials.hec_token }}"
+          acs_token: "{{ instance_credentials.acs_token }}"
+      when: vault_token | length > 0
+
+    # =========================================================================
+    # Configure via ACS API
+    # =========================================================================
+    - name: Create additional indexes via ACS API
+      uri:
+        url: "{{ instance_endpoints.acs_url }}/indexes"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ instance_credentials.acs_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          datatype: "{{ item.datatype }}"
+          searchableDays: "{{ item.searchable_days }}"
+        status_code: [200, 201, 409]  # 409 = already exists
+      loop: "{{ additional_indexes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create additional HEC tokens via ACS API
+      uri:
+        url: "{{ instance_endpoints.acs_url }}/inputs/http-event-collectors"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ instance_credentials.acs_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          defaultIndex: "{{ item.default_index }}"
+          indexes: "{{ item.indexes }}"
+        status_code: [200, 201, 409]
+      loop: "{{ additional_hec_tokens }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # =========================================================================
+    # Verify Configuration
+    # =========================================================================
+    - name: List indexes via ACS API
+      uri:
+        url: "{{ instance_endpoints.acs_url }}/indexes"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ instance_credentials.acs_token }}"
+      register: indexes_result
+
+    - name: Display configured indexes
+      debug:
+        msg: "Indexes: {{ indexes_result.json.indexes | map(attribute='name') | list }}"
+
+    - name: List HEC tokens via ACS API
+      uri:
+        url: "{{ instance_endpoints.acs_url }}/inputs/http-event-collectors"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ instance_credentials.acs_token }}"
+      register: hec_result
+
+    - name: Display configured HEC tokens
+      debug:
+        msg: "HEC Tokens: {{ hec_result.json['http-event-collectors'] | map(attribute='name') | list }}"
+
+  handlers:
+    - name: Cleanup on failure
+      uri:
+        url: "{{ fsc_api_url }}/api/v1/instances/{{ instance_id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ fsc_api_token }}"
+      when: instance_id is defined
+      ignore_errors: true
+
+---
+- name: Destroy Faux Splunk Cloud Instance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    fsc_api_url: "{{ lookup('env', 'FSC_API_URL') | default('http://localhost:8800', true) }}"
+    fsc_api_token: "{{ lookup('env', 'FSC_API_TOKEN') }}"
+    instance_name: "ansible-managed"
+
+  tasks:
+    - name: Get instance by name
+      uri:
+        url: "{{ fsc_api_url }}/api/v1/instances?name={{ instance_name }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ fsc_api_token }}"
+      register: list_result
+
+    - name: Destroy instance
+      uri:
+        url: "{{ fsc_api_url }}/api/v1/instances/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ fsc_api_token }}"
+        status_code: [200, 204, 404]
+      loop: "{{ list_result.json.instances }}"
+      loop_control:
+        label: "{{ item.id }}"
+      when: list_result.json.instances | length > 0
+
+    - name: Instance destroyed
+      debug:
+        msg: "Instance {{ instance_name }} has been destroyed"

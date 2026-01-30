@@ -1,0 +1,91 @@
+# Backstage Software Catalog Entity
+# Reference: https://backstage.io/docs/features/software-catalog/descriptor-format/
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: faux-splunk-cloud
+  title: Faux Splunk Cloud
+  description: |
+    Ephemeral Splunk Cloud Victoria instances for development and testing.
+    Provides ACS API-compatible endpoints, HEC, and Splunk SDK compatibility.
+  annotations:
+    # GitHub repository
+    github.com/project-slug: daijoubussy/faux-splunk-cloud
+    # Documentation
+    backstage.io/techdocs-ref: dir:.
+    # Source location
+    backstage.io/source-location: url:https://github.com/daijoubussy/faux-splunk-cloud
+  tags:
+    - splunk
+    - splunk-cloud
+    - victoria
+    - ephemeral
+    - testing
+    - development
+    - acs-api
+    - hec
+  links:
+    - url: https://help.splunk.com/en/splunk-cloud-platform/administer/admin-config-service-manual/
+      title: Splunk ACS API Documentation
+      icon: dashboard
+    - url: https://help.splunk.com/en/splunk-cloud-platform/splunk-validated-architectures/
+      title: Splunk Validated Architectures
+      icon: docs
+    - url: https://github.com/splunk/splunk-sdk-python
+      title: Splunk SDK for Python
+      icon: github
+spec:
+  type: service
+  lifecycle: experimental
+  owner: platform-team
+  system: developer-platform
+  providesApis:
+    - faux-splunk-api
+  dependsOn:
+    - resource:docker
+
+---
+# API Definition - OpenAPI schema is generated from code
+# The schema is available at /openapi.json when the server is running
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: faux-splunk-api
+  title: Faux Splunk Cloud API
+  description: |
+    Combined API for instance management and ACS simulation.
+
+    **Instance Management** (`/api/v1/instances`)
+    - Create, list, start, stop, destroy ephemeral instances
+
+    **ACS API Simulation** (`/{stack}/adminconfig/v2`)
+    - Index management
+    - HEC token management
+    - App management (Victoria Experience)
+
+    OpenAPI schema is auto-generated from Python code using FastAPI.
+  tags:
+    - rest
+    - openapi
+    - splunk
+    - acs
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: platform-team
+  # OpenAPI definition is generated from code
+  # When running locally: http://localhost:8800/openapi.json
+  # For static catalog, export with: python -m faux_splunk_cloud.api.openapi openapi.json
+  definition:
+    $text: https://raw.githubusercontent.com/daijoubussy/faux-splunk-cloud/main/docs/openapi.json
+
+---
+# Resource: Docker dependency
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: docker
+  description: Docker runtime required for running ephemeral Splunk containers
+spec:
+  type: infrastructure
+  owner: platform-team
