@@ -30,7 +30,7 @@ resource "keycloak_authentication_flow" "browser_with_passkeys" {
 resource "keycloak_authentication_subflow" "cookie" {
   realm_id          = keycloak_realm.faux_splunk.id
   parent_flow_alias = keycloak_authentication_flow.browser_with_passkeys.alias
-  alias             = "cookie"
+  alias             = "fsc-cookie"
   requirement       = "ALTERNATIVE"
 }
 
@@ -63,7 +63,7 @@ resource "keycloak_authentication_execution" "idp_redirector" {
 resource "keycloak_authentication_subflow" "forms" {
   realm_id          = keycloak_realm.faux_splunk.id
   parent_flow_alias = keycloak_authentication_flow.browser_with_passkeys.alias
-  alias             = "forms"
+  alias             = "fsc-forms"
   requirement       = "ALTERNATIVE"
   depends_on        = [keycloak_authentication_execution.idp_redirector]
 }
@@ -79,7 +79,7 @@ resource "keycloak_authentication_execution" "username_password" {
 resource "keycloak_authentication_subflow" "conditional_2fa" {
   realm_id          = keycloak_realm.faux_splunk.id
   parent_flow_alias = keycloak_authentication_subflow.forms.alias
-  alias             = "conditional-2fa"
+  alias             = "fsc-conditional-2fa"
   requirement       = "CONDITIONAL"
   depends_on        = [keycloak_authentication_execution.username_password]
 }
@@ -111,7 +111,7 @@ resource "keycloak_authentication_execution" "otp_form" {
 resource "keycloak_authentication_subflow" "passkey_only" {
   realm_id          = keycloak_realm.faux_splunk.id
   parent_flow_alias = keycloak_authentication_flow.browser_with_passkeys.alias
-  alias             = "passkey-only"
+  alias             = "fsc-passkey-only"
   requirement       = "ALTERNATIVE"
   depends_on        = [keycloak_authentication_subflow.forms]
 }
