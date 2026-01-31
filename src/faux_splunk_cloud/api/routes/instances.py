@@ -45,7 +45,7 @@ class ExtendTTLRequest(BaseModel):
     hours: int = Field(ge=1, le=168, description="Hours to extend")
 
 
-@router.post("", response_model=Instance)
+@router.post("", response_model=Instance, status_code=201)
 async def create_instance(
     request: InstanceCreate,
     _: Annotated[str, Depends(require_auth)],

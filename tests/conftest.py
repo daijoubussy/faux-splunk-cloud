@@ -211,6 +211,8 @@ def make_instance_create(make_instance_config):
 @pytest.fixture
 def make_instance(fixed_datetime, make_instance_config):
     """Factory for creating complete Instance objects."""
+    from datetime import timedelta
+
     counter = 0
 
     def _make(
@@ -230,7 +232,7 @@ def make_instance(fixed_datetime, make_instance_config):
             status=status,
             config=kwargs.pop("config", make_instance_config()),
             created_at=fixed_datetime,
-            expires_at=fixed_datetime.replace(hour=fixed_datetime.hour + 24),
+            expires_at=fixed_datetime + timedelta(hours=24),
             endpoints=InstanceEndpoints(
                 web_url=f"http://localhost:{8000 + counter}",
                 api_url=f"http://localhost:{8089 + counter}",
@@ -245,6 +247,152 @@ def make_instance(fixed_datetime, make_instance_config):
             ),
             **kwargs,
         )
+
+    return _make
+
+
+# =============================================================================
+# Attack Simulation Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def mock_kill_chain_engine() -> MagicMock:
+    """Mock kill chain engine for isolated attack simulation testing."""
+    mock = MagicMock()
+    mock.list_campaigns.return_value = []
+    mock.get_campaign.return_value = None
+    mock.create_campaign.return_value = None
+    mock.get_campaign_logs.return_value = []
+    return mock
+
+
+@pytest.fixture
+def make_threat_actor():
+    """Factory for creating ThreatActorProfile objects."""
+    from faux_splunk_cloud.attack_simulation import (
+        Motivation,
+        ThreatActorProfile,
+        ThreatLevel,
+    )
+
+    def _make(
+        actor_id: str = "apt29",
+        name: str = "APT29",
+        threat_level: ThreatLevel = ThreatLevel.NATION_STATE,
+        **kwargs,
+    ) -> ThreatActorProfile:
+        return ThreatActorProfile(
+            id=actor_id,
+            name=name,
+            aliases=kwargs.get("aliases", ["Cozy Bear", "The Dukes"]),
+            threat_level=threat_level,
+            motivation=kwargs.get("motivation", [Motivation.ESPIONAGE]),
+            attributed_country=kwargs.get("attributed_country", "Russia"),
+            description=kwargs.get("description", "Test threat actor"),
+            techniques=kwargs.get("techniques", ["T1566", "T1059", "T1078"]),
+            target_sectors=kwargs.get("target_sectors", []),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_attack_step(fixed_datetime):
+    """Factory for creating AttackStep objects."""
+    from faux_splunk_cloud.attack_simulation import (
+        AttackPhase,
+        AttackStep,
+        Tactic,
+        Technique,
+    )
+
+    counter = 0
+
+    def _make(
+        phase: AttackPhase = AttackPhase.RECONNAISSANCE,
+        **kwargs,
+    ) -> AttackStep:
+        nonlocal counter
+        counter += 1
+
+        technique = kwargs.get(
+            "technique",
+            Technique(
+                id=f"T{1000 + counter}",
+                name=f"Test Technique {counter}",
+                description="A test technique",
+                tactics=[Tactic.RECONNAISSANCE],
+            ),
+        )
+
+        return AttackStep(
+            id=kwargs.get("id", f"step-{counter:04d}"),
+            technique=technique,
+            phase=phase,
+            tactic=kwargs.get("tactic", Tactic.RECONNAISSANCE),
+            timestamp=kwargs.get("timestamp", fixed_datetime),
+            success=kwargs.get("success", True),
+            detected=kwargs.get("detected", False),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_campaign(fixed_datetime, make_threat_actor, make_attack_step):
+    """Factory for creating AttackCampaign objects."""
+    from faux_splunk_cloud.attack_simulation import (
+        AttackCampaign,
+        AttackPhase,
+        CampaignStatus,
+    )
+
+    counter = 0
+
+    def _make(
+        name: str | None = None,
+        status: CampaignStatus = CampaignStatus.PENDING,
+        target_instance_id: str = "fsc-test-instance",
+        threat_actor_id: str = "apt29",
+        with_steps: bool = False,
+        with_logs: bool = False,
+        detection_probability: float = 0.1,
+        data_sources: list[str] | None = None,
+        **kwargs,
+    ) -> AttackCampaign:
+        nonlocal counter
+        counter += 1
+
+        campaign_id = kwargs.get("id", f"campaign-{counter:04d}")
+        campaign_name = name or f"test-campaign-{counter}"
+
+        threat_actor = make_threat_actor(actor_id=threat_actor_id)
+
+        steps = []
+        if with_steps:
+            for i, phase in enumerate(
+                [AttackPhase.RECONNAISSANCE, AttackPhase.DELIVERY, AttackPhase.EXPLOITATION]
+            ):
+                steps.append(make_attack_step(phase=phase))
+
+        campaign = AttackCampaign(
+            id=campaign_id,
+            name=campaign_name,
+            threat_actor=threat_actor,
+            target_instance_id=target_instance_id,
+            status=status,
+            start_time=fixed_datetime if status != CampaignStatus.PENDING else None,
+            current_phase=AttackPhase.RECONNAISSANCE,
+            steps=steps,
+            detection_probability=detection_probability,
+        )
+
+        # Attach data_sources for testing
+        if data_sources:
+            campaign.data_sources = data_sources
+
+        return campaign
 
     return _make
 
